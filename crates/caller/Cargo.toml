@@ -1,0 +1,17 @@
+[package]
+name = "rgpt-caller"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rgpt-types = { workspace = true }
+reqwest = "0.12.7"
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+serde_json = "1.0.127"
+tokio-stream = "0.1.15"
+reqwest-eventsource = "0.6.0"
+thiserror = "1.0.29"
+backoff = { version = "0.4.0", features = ["tokio"], default-features = false }
+tracing = "0.1.40"
+tracing-test = "0.1.0"

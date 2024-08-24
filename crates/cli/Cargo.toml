@@ -1,0 +1,7 @@
+[package]
+name = "rgpt-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rgpt-types = { workspace = true }
