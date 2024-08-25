@@ -9,7 +9,7 @@ pub const _HUMAN_PROMPT: &str = "\n\nHuman:";
 pub const _AI_PROMPT: &str = "\n\nAssistant:";
 
 /// Default model to use.
-pub const DEFAULT_MODEL: &str = "claude-instant-1.2";
+pub const DEFAULT_MODEL: &str = "claude-3-5-sonnet-20240620";
 pub const DEFAULT_MAX_TOKENS: usize = 100;
 /// Default v1 API base url.
 pub const API_BASE: &str = "https://api.anthropic.com";

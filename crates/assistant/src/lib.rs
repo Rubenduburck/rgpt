@@ -6,7 +6,10 @@ use std::sync::Arc;
 
 use config::Config;
 use rgpt_provider::{api_key::ApiKey, Provider};
-use rgpt_types::{completion::{Request, RequestBuilder, TextEvent}, message::Message};
+use rgpt_types::{
+    completion::{Request, RequestBuilder, TextEvent},
+    message::Message,
+};
 
 use error::Error;
 use session::Session;
@@ -41,11 +44,18 @@ impl Assistant {
         let request = self.build_request(messages);
         let provider = self.provider.clone();
         tokio::spawn(async move {
-            let response = provider.complete(request).await?;
+            let response = match provider.complete(request).await {
+                Ok(response) => response,
+                Err(e) => {
+                    tracing::error!("error: {}", e);
+                    return;
+                }
+            };
             for event in <Vec<TextEvent>>::from(response) {
-                tx.send(event).await.map_err(|_| Error::SendOutput)?;
+                if (tx.send(event).await).is_err() {
+                    tracing::error!("error: send output");
+                }
             }
-            Ok::<(), Error>(())
         });
     }
 
@@ -53,10 +63,19 @@ impl Assistant {
         let request = self.build_request(messages);
         let provider = self.provider.clone();
         tokio::spawn(async move {
-            let stream = provider.complete_stream(request).await?;
-            let mut stream = stream;
-            while let Some(response) = stream.next().await {
-                tx.send(response?).await.map_err(|_| Error::SendOutput)?;
+            let mut stream = provider.complete_stream(request).await?;
+            while let Some(event) = stream.next().await {
+                match event {
+                    Ok(event) => {
+                        if (tx.send(event).await).is_err() {
+                            tracing::error!("error: send output");
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("error: {}", e);
+                        break;
+                    }
+                }
             }
             Ok::<(), Error>(())
         });
@@ -77,7 +96,6 @@ impl Assistant {
     pub async fn query(self, messages: &[Message]) -> Result<(), Error> {
         Session::setup(self)?.run_once(messages).await
     }
-
 }
 
 #[cfg(test)]
