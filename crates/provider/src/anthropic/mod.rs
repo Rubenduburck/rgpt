@@ -22,5 +22,22 @@ const CLIENT_ID_HEADER_KEY: &str = "Client";
 /// Ref: https://docs.anthropic.com/claude/reference/versioning
 const API_VERSION_HEADER_KEY: &str = "anthropic-version";
 
+lazy_static::lazy_static! {
+    /// A value to represent the client id of this SDK.
+    pub static ref CLIENT_ID: String = client_id();
+}
+
 /// Ref: https://docs.anthropic.com/claude/reference/versioning
 const API_VERSION: &str = "2023-06-01";
+
+/// Get the client id.
+pub fn client_id() -> String {
+    // Get the Rust version used to build SDK at compile time.
+    let rust_version = match rustc_version::version() {
+        Ok(v) => v.to_string(),
+        Err(_) => "unknown".to_string(),
+    };
+    let crate_name = env!("CARGO_PKG_NAME");
+    let crate_version = env!("CARGO_PKG_VERSION");
+    format!("rustv{rust_version}/{crate_name}/{crate_version}")
+}

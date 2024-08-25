@@ -3,4 +3,16 @@
 pub enum Error {
     #[error("No api key")]
     NoApiKey,
+
+    #[error("Provider error: {0}")]
+    Provider(#[from] rgpt_provider::error::Error),
+
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("Input error")]
+    SendInput,
+
+    #[error("Output error")]
+    SendOutput,
 }

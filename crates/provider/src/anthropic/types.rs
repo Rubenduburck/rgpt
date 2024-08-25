@@ -1,6 +1,7 @@
 //! Module for types used in the API.
 use std::pin::Pin;
 
+use rgpt_types::completion::Request;
 use serde::{Deserialize, Serialize};
 use tokio_stream::Stream;
 
@@ -13,6 +14,17 @@ use super::DEFAULT_MAX_TOKENS;
 pub enum StopReason {
     MaxTokens,
     StopSequence,
+    EndTurn,
+}
+
+impl From<StopReason> for rgpt_types::completion::StopReason {
+    fn from(reason: StopReason) -> Self {
+        match reason {
+            StopReason::MaxTokens => Self::MaxTokens,
+            StopReason::StopSequence => Self::StopSequence,
+            StopReason::EndTurn => Self::EndTurn,
+        }
+    }
 }
 
 // Completion API
@@ -60,12 +72,20 @@ pub struct CompleteResponse {
 pub type CompleteResponseStream =
     Pin<Box<dyn Stream<Item = Result<CompleteResponse, rgpt_caller::error::Error>> + Send>>;
 
-
 // Messages API
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Message {
     pub role: String,
     pub content: String,
+}
+
+impl From<rgpt_types::completion::Message> for Message {
+    fn from(message: rgpt_types::completion::Message) -> Self {
+        Self {
+            role: message.role,
+            content: message.content,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -80,6 +100,31 @@ pub struct MessagesRequest {
     pub system: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
+}
+
+impl From<Request> for MessagesRequest {
+    fn from(val: Request) -> Self {
+        let (system, messages) = val.messages.into_iter().fold(
+            (None, vec![]),
+            |(system, mut messages), message| {
+                if message.role == "system" {
+                    (Some(message.content), messages)
+                } else {
+                    messages.push(message.into());
+                    (system, messages)
+                }
+            },
+        );
+        MessagesRequest {
+            messages,
+            model: val.model.unwrap_or(DEFAULT_MODEL.to_string()),
+            max_tokens: val.max_tokens,
+            stop_sequences: val.stop_sequences,
+            stream: val.stream,
+            system,
+            temperature: val.temperature,
+        }
+    }
 }
 
 impl Default for MessagesRequest {
@@ -103,10 +148,28 @@ pub struct Content {
     pub type_: String,
 }
 
+impl From<Content> for rgpt_types::completion::Content {
+    fn from(content: Content) -> Self {
+        Self {
+            text: content.text,
+            type_: content.type_,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Usage {
     input_tokens: usize,
     output_tokens: usize,
+}
+
+impl From<Usage> for rgpt_types::completion::Usage {
+    fn from(usage: Usage) -> Self {
+        Self {
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone, Serialize)]
@@ -121,5 +184,23 @@ pub struct MessagesResponse {
     pub usage: Usage,
 }
 
-pub type MessagesResponseStream =
-    Pin<Box<dyn Stream<Item = Result<MessagesResponse, rgpt_caller::error::Error>> + Send>>;
+impl From<MessagesResponse> for rgpt_types::completion::Response {
+    fn from(response: MessagesResponse) -> Self {
+        Self {
+            stop_reason: response
+                .stop_reason
+                .map(rgpt_types::completion::StopReason::from),
+            stop_sequence: response.stop_sequence,
+            content: response
+                .content
+                .into_iter()
+                .map(rgpt_types::completion::Content::from)
+                .collect(),
+            model: response.model,
+            id: response.id,
+            type_: response.type_,
+            usage: response.usage.into(),
+        }
+    }
+}
+

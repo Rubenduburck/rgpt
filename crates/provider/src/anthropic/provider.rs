@@ -1,11 +1,20 @@
+use std::pin::Pin;
+
 use crate::anthropic::error::Error;
 use crate::anthropic::types::{CompleteRequest, CompleteResponse, CompleteResponseStream};
 use crate::anthropic::{API_BASE, API_VERSION, API_VERSION_HEADER_KEY, AUTHORIZATION_HEADER_KEY};
 use reqwest::header::{HeaderMap, ACCEPT, CONTENT_TYPE};
 
 use rgpt_caller::client::Client;
+use tokio_stream::Stream;
 
-use super::types::{MessagesRequest, MessagesResponse, MessagesResponseStream};
+use super::types::{MessagesRequest, MessagesResponse};
+use super::{CLIENT_ID, CLIENT_ID_HEADER_KEY};
+
+pub type MessagesResponseStream =
+    Pin<Box<dyn Stream<Item = Result<MessagesResponse, Error>> + Send>>;
+
+use rgpt_utils::stream::adapt_stream;
 
 #[derive(Debug)]
 pub struct Provider {
@@ -21,6 +30,7 @@ impl Provider {
             format!("Bearer {}", api_key).parse().unwrap(),
         );
         headers.insert(AUTHORIZATION_HEADER_KEY, api_key.parse().unwrap());
+        headers.insert(CLIENT_ID_HEADER_KEY, CLIENT_ID.parse().unwrap());
         headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
         headers.insert(ACCEPT, "application/json".parse().unwrap());
         headers.insert(API_VERSION_HEADER_KEY, API_VERSION.parse().unwrap());
@@ -28,24 +38,35 @@ impl Provider {
         Self { api_key, caller }
     }
 
-    pub async fn messages(&self, request: MessagesRequest) -> Result<MessagesResponse, Error> {
+    pub async fn messages<R>(&self, request: R) -> Result<MessagesResponse, Error>
+    where
+        R: Into<MessagesRequest>,
+    {
+        let request = request.into();
+        tracing::debug!("request: {:?}", request);
         Ok(self
             .caller
             .post(&format!("{}/v1/messages", API_BASE), request)
             .await?)
     }
 
-    pub async fn messages_stream(
-        &self,
-        request: MessagesRequest,
-    ) -> Result<MessagesResponseStream, Error> {
-        Ok(self
+    pub async fn messages_stream<R>(&self, request: R) -> Result<MessagesResponseStream, Error>
+    where
+        R: Into<MessagesRequest>,
+    {
+        let request = request.into();
+        let stream = self
             .caller
             .post_stream(&format!("{}/v1/messages", API_BASE), request)
-            .await)
+            .await;
+        Ok(adapt_stream(stream, |res| res.map_err(Into::into)))
     }
 
-    pub async fn complete(&self, request: CompleteRequest) -> Result<CompleteResponse, Error> {
+    pub async fn complete<R>(&self, request: R) -> Result<CompleteResponse, Error>
+    where
+        R: Into<CompleteRequest>,
+    {
+        let request = request.into();
         if request.stream {
             return Err(Error::InvalidArgument(
                 "When stream is true, use complete_stream() instead".into(),
@@ -57,10 +78,11 @@ impl Provider {
             .await?)
     }
 
-    pub async fn complete_stream(
-        &self,
-        request: CompleteRequest,
-    ) -> Result<CompleteResponseStream, Error> {
+    pub async fn complete_stream<R>(&self, request: R) -> Result<CompleteResponseStream, Error>
+    where
+        R: Into<CompleteRequest>,
+    {
+        let request = request.into();
         if !request.stream {
             return Err(Error::InvalidArgument(
                 "When stream is false, use complete() instead".into(),

@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 rgpt-types = { workspace = true }
 rgpt-caller = { workspace = true }
+rgpt-utils = { workspace = true }
 
 reqwest = "0.12.7"
 serde = { version = "1.0", features = ["derive"] }
@@ -17,3 +18,5 @@ thiserror = "1.0.29"
 backoff = { version = "0.4.0", features = ["tokio"], default-features = false }
 tracing = "0.1.40"
 tracing-test = "0.2.5"
+lazy_static = "1.5.0"
+rustc_version = "0.4.0"

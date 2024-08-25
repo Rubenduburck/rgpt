@@ -34,7 +34,6 @@ impl Client {
             .post(uri)
             .headers(self.headers.clone())
             .body(serde_json::to_vec(&request)?)
-            .header(CONTENT_TYPE, "application/json")
             .build()?;
 
         self.execute(request).await
