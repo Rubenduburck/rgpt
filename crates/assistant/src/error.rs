@@ -15,4 +15,13 @@ pub enum Error {
 
     #[error("Output error")]
     SendOutput,
+
+    #[error("Draw error {0}")]
+    Draw(String),
+
+    #[error("Exit")]
+    Exit,
+
+    #[error("Join error")]
+    Join(#[from] tokio::task::JoinError),
 }

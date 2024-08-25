@@ -1,7 +1,7 @@
 use std::pin::Pin;
 
 use crate::anthropic::error::Error;
-use crate::anthropic::types::{CompleteRequest, CompleteResponse, CompleteResponseStream};
+use crate::anthropic::types::{CompleteRequest, CompleteResponse};
 use crate::anthropic::{API_BASE, API_VERSION, API_VERSION_HEADER_KEY, AUTHORIZATION_HEADER_KEY};
 use reqwest::header::{HeaderMap, ACCEPT, CONTENT_TYPE};
 
@@ -14,8 +14,6 @@ use super::{CLIENT_ID, CLIENT_ID_HEADER_KEY};
 
 pub type MessagesEventStream =
     Pin<Box<dyn Stream<Item = Result<MessagesEvent, Error>> + Send>>;
-
-use rgpt_utils::stream::adapt_stream;
 
 #[derive(Debug)]
 pub struct Provider {
@@ -140,7 +138,8 @@ impl Provider {
 mod tests {
     use crate::anthropic::types::Message;
 
-    use super::super::{AI_PROMPT, HUMAN_PROMPT};
+    const AI_PROMPT: &str = "Assistant: ";
+    const HUMAN_PROMPT: &str = "Human: ";
     use super::*;
 
     #[tokio::test]

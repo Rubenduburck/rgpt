@@ -1,13 +1,12 @@
 pub mod provider;
-pub mod config;
 pub mod error;
 pub mod types;
 pub mod api_key;
 
 /// A constant to represent the human prompt.
-pub const HUMAN_PROMPT: &str = "\n\nHuman:";
+pub const _HUMAN_PROMPT: &str = "\n\nHuman:";
 /// A constant to represent the assistant prompt.
-pub const AI_PROMPT: &str = "\n\nAssistant:";
+pub const _AI_PROMPT: &str = "\n\nAssistant:";
 
 /// Default model to use.
 pub const DEFAULT_MODEL: &str = "claude-instant-1.2";

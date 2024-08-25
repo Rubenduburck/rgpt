@@ -1,4 +1,4 @@
-use rgpt_types::completion::Message;
+use rgpt_types::message::Message;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]

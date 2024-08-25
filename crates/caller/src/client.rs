@@ -1,6 +1,6 @@
 use std::pin::Pin;
 
-use reqwest::header::{HeaderMap, CONTENT_TYPE};
+use reqwest::header::HeaderMap;
 use reqwest_eventsource::{Event, EventSource, RequestBuilderExt};
 use serde::de::DeserializeOwned;
 use serde::Serialize;

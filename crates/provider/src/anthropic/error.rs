@@ -8,13 +8,13 @@ pub enum Error {
     Reqwest(#[from] reqwest::Error),
     /// OpenAI returns error object with details of API call failure
     #[error("{}: {}", .0.r#type, .0.message)]
-    ApiError(ApiError),
+    Api(ApiError),
     /// Error when a response cannot be deserialized into a Rust type
     #[error("failed to deserialize api response: {0}")]
     JSONDeserialize(serde_json::Error),
     /// Error on SSE streaming
     #[error("stream failed: {0}")]
-    StreamError(String),
+    Stream(String),
     /// Error from client side validation
     /// or when builder fails to build request before making API call
     #[error("invalid args: {0}")]
@@ -24,7 +24,7 @@ pub enum Error {
     JSONSerialize(#[from] serde_json::Error),
 
     #[error("Caller error: {0}")]
-    CallerError(#[from] rgpt_caller::error::Error),
+    Caller(#[from] rgpt_caller::error::Error),
 }
 
 /// Anthropic API returns error object on failure
@@ -36,12 +36,3 @@ pub struct ApiError {
     pub code: Option<serde_json::Value>,
 }
 
-/// Wrapper to deserialize the error object nested in "error" JSON key
-#[derive(Debug, Deserialize)]
-pub(crate) struct WrappedError {
-    pub(crate) error: ApiError,
-}
-
-pub(crate) fn map_deserialization_error(e: serde_json::Error, _bytes: &[u8]) -> Error {
-    Error::JSONDeserialize(e)
-}

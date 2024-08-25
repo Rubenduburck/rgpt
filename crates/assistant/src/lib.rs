@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use config::Config;
 use rgpt_provider::{api_key::ApiKey, Provider};
-use rgpt_types::completion::{Event, Message, Request, RequestBuilder};
+use rgpt_types::{completion::{Request, RequestBuilder, TextEvent}, message::Message};
 
 use error::Error;
 use session::Session;
@@ -37,19 +37,19 @@ impl Assistant {
             .build()
     }
 
-    fn complete(&self, messages: Vec<Message>, tx: tokio::sync::mpsc::Sender<Event>) {
+    fn complete(&self, messages: Vec<Message>, tx: tokio::sync::mpsc::Sender<TextEvent>) {
         let request = self.build_request(messages);
         let provider = self.provider.clone();
         tokio::spawn(async move {
             let response = provider.complete(request).await?;
-            for event in <Vec<Event>>::from(response) {
+            for event in <Vec<TextEvent>>::from(response) {
                 tx.send(event).await.map_err(|_| Error::SendOutput)?;
             }
             Ok::<(), Error>(())
         });
     }
 
-    fn complete_stream(&self, messages: Vec<Message>, tx: tokio::sync::mpsc::Sender<Event>) {
+    fn complete_stream(&self, messages: Vec<Message>, tx: tokio::sync::mpsc::Sender<TextEvent>) {
         let request = self.build_request(messages);
         let provider = self.provider.clone();
         tokio::spawn(async move {
@@ -62,7 +62,7 @@ impl Assistant {
         });
     }
 
-    fn handle_input(&self, messages: Vec<Message>, tx: tokio::sync::mpsc::Sender<Event>) {
+    fn handle_input(&self, messages: Vec<Message>, tx: tokio::sync::mpsc::Sender<TextEvent>) {
         if self.config.stream {
             self.complete_stream(messages, tx);
         } else {
@@ -71,7 +71,11 @@ impl Assistant {
     }
 
     pub async fn session(self, messages: &[Message]) -> Result<(), Error> {
-        Session::start(self, messages).await
+        Session::setup(self)?.start(messages).await
+    }
+
+    pub async fn query(self, messages: &[Message]) -> Result<(), Error> {
+        Session::setup(self)?.run_once(messages).await
     }
 
 }

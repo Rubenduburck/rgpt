@@ -1,9 +1,5 @@
-//! Module for types used in the API.
-use std::pin::Pin;
-
-use rgpt_types::completion::{Event, Request};
+use rgpt_types::completion::{TextEvent, Request};
 use serde::{Deserialize, Serialize};
-use tokio_stream::Stream;
 
 use crate::anthropic::DEFAULT_MODEL;
 
@@ -69,9 +65,6 @@ pub struct CompleteResponse {
     pub id: String,
 }
 
-pub type CompleteResponseStream =
-    Pin<Box<dyn Stream<Item = Result<CompleteResponse, rgpt_caller::error::Error>> + Send>>;
-
 // Messages API
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Message {
@@ -79,8 +72,8 @@ pub struct Message {
     pub content: String,
 }
 
-impl From<rgpt_types::completion::Message> for Message {
-    fn from(message: rgpt_types::completion::Message) -> Self {
+impl From<rgpt_types::message::Message> for Message {
+    fn from(message: rgpt_types::message::Message) -> Self {
         Self {
             role: message.role,
             content: message.content,
@@ -254,23 +247,23 @@ pub enum Delta {
     TextDelta{ text: String },
 }
 
-impl From<MessagesEvent> for Event {
+impl From<MessagesEvent> for TextEvent {
     fn from(event: MessagesEvent) -> Self {
         match event {
-            MessagesEvent::Ping => Event::Ping,
+            MessagesEvent::Ping => TextEvent::Null,
             MessagesEvent::MessageStart { message } => {
-                Event::MessageStart { message: message.into() }
+                TextEvent::MessageStart { message: message.into() }
             }
-            MessagesEvent::MessageOpen => Event::MessageOpen,
-            MessagesEvent::ContentBlockStop { index } => Event::ContentBlockStop { index },
+            MessagesEvent::MessageOpen => TextEvent::Null,
+            MessagesEvent::ContentBlockStop { index } => TextEvent::ContentBlockStop { index },
             MessagesEvent::ContentBlockStart { index, content_block } => {
-                Event::ContentBlockStart { index, content_block: content_block.into() }
+                TextEvent::ContentBlockStart { index, content_block: content_block.into() }
             }
             MessagesEvent::ContentBlockDelta { index, delta } => {
-                Event::ContentBlockDelta { index, delta: delta.into() }
+                TextEvent::ContentBlockDelta { index, delta: delta.into() }
             }
-            MessagesEvent::MessageDelta { delta } => Event::MessageDelta { delta: delta.into() },
-            MessagesEvent::MessageStop => Event::MessageStop,
+            MessagesEvent::MessageDelta { delta } => TextEvent::MessageDelta { delta: delta.into() },
+            MessagesEvent::MessageStop => TextEvent::MessageStop,
         }
     }
 }

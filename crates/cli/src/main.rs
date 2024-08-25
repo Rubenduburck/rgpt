@@ -1,9 +1,11 @@
 pub mod error;
 
+use std::process::exit;
+
 use clap::Parser;
 use error::Error;
 use rgpt_assistant::{config::Config, Assistant};
-use rgpt_types::completion::Message;
+use rgpt_types::message::Message;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -27,14 +29,19 @@ impl Args {
             .map_or_else(Vec::new, |input| vec![Message::from(input.clone())]);
         tracing::debug!("Starting assistant with config: {:?}", cfg);
         let assistant = Assistant::new(cfg)?;
-        assistant.session(&messages).await?;
+        match self.session {
+            true => assistant.session(&messages).await?,
+            false => assistant.query(&messages).await?,
+        }
+        tracing::info!("Assistant finished");
         Ok(())
-
     }
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     rgpt_utils::logging::init_logger();
-    Args::parse().execute().await
+    Args::parse().execute().await?;
+    // Exit program
+    exit(0);
 }

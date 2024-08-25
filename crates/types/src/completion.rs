@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::message::Message;
+
 #[derive(Debug, Clone)]
 pub struct Request {
     pub messages: Vec<Message>,
@@ -123,9 +125,9 @@ pub struct Response {
     pub usage: Usage,
 }
 
-impl From<Response> for Event {
+impl From<Response> for TextEvent {
     fn from(response: Response) -> Self {
-        Event::MessageStart {
+        TextEvent::MessageStart {
             message: MessageStartData {
                 id: response.id,
                 type_: response.type_,
@@ -140,9 +142,9 @@ impl From<Response> for Event {
     }
 }
 
-impl From<Response> for Vec<Event> {
+impl From<Response> for Vec<TextEvent> {
     fn from(response: Response) -> Self {
-        vec![Event::from(response), Event::MessageStop]
+        vec![TextEvent::from(response), TextEvent::MessageStop]
     }
 }
 
@@ -154,52 +156,11 @@ pub enum StopReason {
     EndTurn,
 }
 
-// Equivalent to TypedDict in Python
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Message {
-    pub role: String,
-    pub content: String,
-}
-
-impl From<String> for Message {
-    fn from(content: String) -> Self {
-        Self {
-            role: "user".to_string(),
-            content,
-        }
-    }
-}
-
-// Equivalent to TypedDict with total=False
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-pub struct ModelOverrides {
-    pub model: Option<String>,
-    pub temperature: Option<f32>,
-    pub top_p: Option<f32>,
-}
-
-// Equivalent to TypedDict
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Pricing {
-    pub prompt: f32,
-    pub response: f32,
-}
-
-// Equivalent to dataclass
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct MessageDeltaEvent<'a> {
-    text: String,
-    #[allow(dead_code)]
-    #[serde(rename = "type")]
-    r#type: &'a str,
-}
-
 #[derive(Debug, Deserialize, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
 #[serde(tag = "type")]
-pub enum Event {
-    Ping,
-    MessageOpen,
+pub enum TextEvent {
+    Null,
     MessageStart {
         message: MessageStartData,
     },
@@ -220,35 +181,35 @@ pub enum Event {
     MessageStop,
 }
 
-impl Event {
+impl TextEvent {
     pub fn text(&self) -> Option<String> {
         match self {
-            Event::ContentBlockStart { content_block, .. } => match content_block {
+            TextEvent::ContentBlockStart { content_block, .. } => match content_block {
                 ContentBlock::Text { text } => Some(text.clone()),
             },
-            Event::ContentBlockDelta { delta, .. } => match delta {
+            TextEvent::ContentBlockDelta { delta, .. } => match delta {
                 Delta::TextDelta { text } => Some(text.clone()),
             },
-            Event::ContentBlockStop { .. } => Some("\n".to_string()),
+            TextEvent::ContentBlockStop { .. } => Some("\n".to_string()),
             _ => None,
         }
     }
 
     pub fn is_stop(&self) -> bool {
         match self {
-            Event::MessageStart { message } => {
+            TextEvent::MessageStart { message } => {
                 message.stop_reason.is_some() || message.stop_sequence.is_some()
             }
-            Event::MessageStop => true,
-            Event::ContentBlockStop { .. } => true,
+            TextEvent::MessageStop => true,
+            TextEvent::ContentBlockStop { .. } => true,
             _ => false,
         }
     }
 
     pub fn is_complete(&self) -> bool {
         match self {
-            Event::MessageStart { message } => message.stop_reason == Some(StopReason::EndTurn),
-            Event::MessageStop => true,
+            TextEvent::MessageStart { message } => message.stop_reason == Some(StopReason::EndTurn),
+            TextEvent::MessageStop => true,
             _ => false,
         }
     }
