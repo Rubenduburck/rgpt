@@ -22,6 +22,8 @@ pub enum Error {
 
     #[error("Serialization error: {0}")]
     SerializationError(#[from] serde_json::Error),
+    #[error("reqwest eventsource cannot clone request: {0}")]
+    ReqwestEventSource(#[from] reqwest_eventsource::CannotCloneRequestError),
 }
 
 /// Anthropic API returns error object on failure

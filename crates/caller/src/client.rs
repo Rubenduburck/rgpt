@@ -39,24 +39,25 @@ impl Client {
         self.execute(request).await
     }
 
-    pub async fn post_stream<I, O>(
+    pub async fn post_stream<I, O, E>(
         &self,
         uri: &str,
         request: I,
-    ) -> Pin<Box<dyn Stream<Item = Result<O, Error>> + Send>>
+        handler: impl Fn(Event) -> Result<O, E> + Send + 'static,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<O, E>> + Send>>, Error>
     where
         I: Serialize,
         O: DeserializeOwned + Send + 'static,
+        E: Send + 'static,
     {
         let event_source = self
             .http_client
             .post(uri)
             .headers(self.headers.clone())
-            .body(serde_json::to_vec(&request).expect("Failed to serialize request"))
-            .eventsource()
-            .unwrap();
+            .body(serde_json::to_vec(&request)?)
+            .eventsource()?;
 
-        stream(event_source).await
+        Ok(stream(event_source, handler).await)
     }
 
     async fn process_response<O>(&self, response: reqwest::Response) -> Result<O, Error>
@@ -135,44 +136,27 @@ impl Client {
     }
 }
 
-async fn stream<O>(
+async fn stream<O, E>(
     mut event_source: EventSource,
-) -> Pin<Box<dyn Stream<Item = Result<O, Error>> + Send>>
+    event_handler: impl Fn(Event) -> Result<O, E> + Send + 'static,
+) -> Pin<Box<dyn Stream<Item = Result<O, E>> + Send>>
 where
     O: DeserializeOwned + Send + 'static,
+    E: Send + 'static,
 {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
 
     tokio::spawn(async move {
         while let Some(ev) = event_source.next().await {
             match ev {
-                Ok(event) => match event {
-                    Event::Open => continue,
-                    Event::Message(message) => {
-                        match message.event.as_ref() {
-                            "ping" => continue,
-                            "completion" => {
-                                let response = match serde_json::from_str::<O>(&message.data) {
-                                    Ok(output) => Ok(output),
-                                    Err(e) => {
-                                        Err(map_deserialization_error(e, message.data.as_bytes()))
-                                    }
-                                };
-
-                                if let Err(_e) = tx.send(response) {
-                                    // rx dropped
-                                    break;
-                                }
-                            }
-                            _ => continue,
-                        }
-                    }
-                },
-                Err(e) => {
-                    if let Err(_e) = tx.send(Err(Error::StreamError(e.to_string()))) {
+                Ok(ev) => {
+                    if let Err(_e) = tx.send(event_handler(ev)) {
                         // rx dropped
                         break;
                     }
+                }
+                Err(_e) => {
+                    break;
                 }
             }
         }

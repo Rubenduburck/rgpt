@@ -1,8 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::iter::Iterator;
-use std::pin::Pin;
-use tokio_stream::{Stream, StreamExt};
 
 #[derive(Debug, Clone)]
 pub struct Request {
@@ -127,6 +123,29 @@ pub struct Response {
     pub usage: Usage,
 }
 
+impl From<Response> for Event {
+    fn from(response: Response) -> Self {
+        Event::MessageStart {
+            message: MessageStartData {
+                id: response.id,
+                type_: response.type_,
+                role: "assistant".to_string(),
+                model: response.model,
+                content: response.content.to_vec(),
+                stop_reason: response.stop_reason,
+                stop_sequence: response.stop_sequence,
+                usage: response.usage,
+            },
+        }
+    }
+}
+
+impl From<Response> for Vec<Event> {
+    fn from(response: Response) -> Self {
+        vec![Event::from(response), Event::MessageStop]
+    }
+}
+
 #[derive(Debug, Deserialize, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StopReason {
@@ -175,87 +194,96 @@ pub struct MessageDeltaEvent<'a> {
     r#type: &'a str,
 }
 
-impl<'a> MessageDeltaEvent<'a> {
-    fn new(text: String) -> Self {
-        Self {
-            text,
-            r#type: "message_delta",
+#[derive(Debug, Deserialize, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[serde(tag = "type")]
+pub enum Event {
+    Ping,
+    MessageOpen,
+    MessageStart {
+        message: MessageStartData,
+    },
+    ContentBlockStart {
+        index: usize,
+        content_block: ContentBlock,
+    },
+    ContentBlockDelta {
+        index: usize,
+        delta: Delta,
+    },
+    ContentBlockStop {
+        index: usize,
+    },
+    MessageDelta {
+        delta: MessageDelta,
+    },
+    MessageStop,
+}
+
+impl Event {
+    pub fn text(&self) -> Option<String> {
+        match self {
+            Event::ContentBlockStart { content_block, .. } => match content_block {
+                ContentBlock::Text { text } => Some(text.clone()),
+            },
+            Event::ContentBlockDelta { delta, .. } => match delta {
+                Delta::TextDelta { text } => Some(text.clone()),
+            },
+            Event::ContentBlockStop { .. } => Some("\n".to_string()),
+            _ => None,
+        }
+    }
+
+    pub fn is_stop(&self) -> bool {
+        match self {
+            Event::MessageStart { message } => {
+                message.stop_reason.is_some() || message.stop_sequence.is_some()
+            }
+            Event::MessageStop => true,
+            Event::ContentBlockStop { .. } => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_complete(&self) -> bool {
+        match self {
+            Event::MessageStart { message } => message.stop_reason == Some(StopReason::EndTurn),
+            Event::MessageStop => true,
+            _ => false,
         }
     }
 }
 
-// Equivalent to dataclass
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct UsageEvent<'a> {
-    prompt_tokens: i32,
-    completion_tokens: i32,
-    total_tokens: i32,
-    cost: f32,
-    #[allow(dead_code)]
+#[derive(Debug, Deserialize, Clone, Serialize)]
+pub struct MessageStartData {
+    pub id: String,
     #[serde(rename = "type")]
-    r#type: &'a str,
+    pub type_: String,
+    pub role: String,
+    pub model: String,
+    pub content: Vec<Content>,
+    pub stop_reason: Option<StopReason>,
+    pub stop_sequence: Option<String>,
+    pub usage: Usage,
 }
 
-impl<'a> UsageEvent<'a> {
-    fn new(prompt_tokens: i32, completion_tokens: i32, total_tokens: i32, cost: f32) -> Self {
-        Self {
-            prompt_tokens,
-            completion_tokens,
-            total_tokens,
-            cost,
-            r#type: "usage",
-        }
-    }
-
-    fn with_pricing(
-        prompt_tokens: i32,
-        completion_tokens: i32,
-        total_tokens: i32,
-        pricing: &Pricing,
-    ) -> Self {
-        Self::new(
-            prompt_tokens,
-            completion_tokens,
-            total_tokens,
-            prompt_tokens as f32 * pricing.prompt + completion_tokens as f32 * pricing.response,
-        )
-    }
+#[derive(Debug, Deserialize, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct MessageDelta {
+    pub stop_reason: Option<StopReason>,
+    pub stop_sequence: Option<String>,
 }
 
-// Equivalent to Union
-#[derive(Debug, Clone)]
-pub enum CompletionEvent<'a> {
-    MessageDelta(MessageDeltaEvent<'a>),
-    Usage(UsageEvent<'a>),
+#[derive(Debug, Deserialize, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[serde(tag = "type")]
+pub enum ContentBlock {
+    Text { text: String },
 }
 
-// Equivalent to abstract base class
-pub trait CompletionProvider {
-    fn complete(
-        &self,
-        messages: &[Message],
-        args: &HashMap<String, String>,
-        stream: bool,
-    ) -> Box<dyn Iterator<Item = CompletionEvent>>;
-}
-
-// Custom error types
-#[derive(Debug, Deserialize, Serialize)]
-pub struct CompletionError;
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct BadRequestError;
-
-impl std::error::Error for CompletionError {}
-impl std::fmt::Display for CompletionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Completion error")
-    }
-}
-
-impl std::error::Error for BadRequestError {}
-impl std::fmt::Display for BadRequestError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Bad request error")
-    }
+#[derive(Debug, Deserialize, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[serde(tag = "type")]
+pub enum Delta {
+    TextDelta { text: String },
 }

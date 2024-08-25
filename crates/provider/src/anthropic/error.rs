@@ -21,7 +21,7 @@ pub enum Error {
     InvalidArgument(String),
 
     #[error("Serialization error: {0}")]
-    SerializationError(#[from] serde_json::Error),
+    JSONSerialize(#[from] serde_json::Error),
 
     #[error("Caller error: {0}")]
     CallerError(#[from] rgpt_caller::error::Error),

@@ -1,7 +1,7 @@
 //! Module for types used in the API.
 use std::pin::Pin;
 
-use rgpt_types::completion::Request;
+use rgpt_types::completion::{Event, Request};
 use serde::{Deserialize, Serialize};
 use tokio_stream::Stream;
 
@@ -204,3 +204,113 @@ impl From<MessagesResponse> for rgpt_types::completion::Response {
     }
 }
 
+#[derive(Debug, Deserialize, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[serde(tag = "type")]
+pub enum MessagesEvent {
+    Ping,
+    MessageOpen,
+    MessageStart {
+        message: MessageStartData,
+    },
+    ContentBlockStart { index: usize, content_block: ContentBlock },
+    ContentBlockDelta { index: usize, delta: Delta },
+    ContentBlockStop { index: usize },
+    MessageDelta { delta: MessageDelta },
+    MessageStop,
+}
+
+#[derive(Debug, Deserialize, Clone, Serialize)]
+pub struct MessageStartData {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub role: String,
+    pub model: String,
+    pub content: Vec<Content>,
+    pub stop_reason: Option<StopReason>,
+    pub stop_sequence: Option<String>,
+    pub usage: Usage,
+}
+
+#[derive(Debug, Deserialize, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct MessageDelta {
+    pub stop_reason: Option<StopReason>,
+    pub stop_sequence: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[serde(tag = "type")]
+pub enum ContentBlock {
+    Text{ text: String },
+}
+
+#[derive(Debug, Deserialize, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[serde(tag = "type")]
+pub enum Delta {
+    TextDelta{ text: String },
+}
+
+impl From<MessagesEvent> for Event {
+    fn from(event: MessagesEvent) -> Self {
+        match event {
+            MessagesEvent::Ping => Event::Ping,
+            MessagesEvent::MessageStart { message } => {
+                Event::MessageStart { message: message.into() }
+            }
+            MessagesEvent::MessageOpen => Event::MessageOpen,
+            MessagesEvent::ContentBlockStop { index } => Event::ContentBlockStop { index },
+            MessagesEvent::ContentBlockStart { index, content_block } => {
+                Event::ContentBlockStart { index, content_block: content_block.into() }
+            }
+            MessagesEvent::ContentBlockDelta { index, delta } => {
+                Event::ContentBlockDelta { index, delta: delta.into() }
+            }
+            MessagesEvent::MessageDelta { delta } => Event::MessageDelta { delta: delta.into() },
+            MessagesEvent::MessageStop => Event::MessageStop,
+        }
+    }
+}
+
+impl From<ContentBlock> for rgpt_types::completion::ContentBlock {
+    fn from(content_block: ContentBlock) -> Self {
+        match content_block {
+            ContentBlock::Text { text } => Self::Text { text },
+        }
+    }
+}
+
+impl From<Delta> for rgpt_types::completion::Delta {
+    fn from(delta: Delta) -> Self {
+        match delta {
+            Delta::TextDelta { text } => Self::TextDelta { text },
+        }
+    }
+}
+
+impl From<MessageDelta> for rgpt_types::completion::MessageDelta {
+    fn from(delta: MessageDelta) -> Self {
+        Self {
+            stop_reason: delta.stop_reason.map(rgpt_types::completion::StopReason::from),
+            stop_sequence: delta.stop_sequence,
+        }
+    }
+}
+
+impl From<MessageStartData> for rgpt_types::completion::MessageStartData {
+    fn from(data: MessageStartData) -> Self {
+        Self {
+            id: data.id,
+            type_: data.type_,
+            role: data.role,
+            model: data.model,
+            content: data.content.into_iter().map(rgpt_types::completion::Content::from).collect(),
+            stop_reason: data.stop_reason.map(rgpt_types::completion::StopReason::from),
+            stop_sequence: data.stop_sequence,
+            usage: data.usage.into(),
+        }
+    }
+}

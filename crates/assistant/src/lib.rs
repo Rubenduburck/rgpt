@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use config::Config;
 use rgpt_provider::{api_key::ApiKey, Provider};
-use rgpt_types::completion::{Message, Request, RequestBuilder, Response};
+use rgpt_types::completion::{Event, Message, Request, RequestBuilder};
 
 use error::Error;
 use session::Session;
@@ -37,31 +37,32 @@ impl Assistant {
             .build()
     }
 
-    fn complete(&self, messages: Vec<Message>, tx: tokio::sync::mpsc::Sender<Response>) {
+    fn complete(&self, messages: Vec<Message>, tx: tokio::sync::mpsc::Sender<Event>) {
         let request = self.build_request(messages);
         let provider = self.provider.clone();
         tokio::spawn(async move {
             let response = provider.complete(request).await?;
-            tx.send(response).await.map_err(|_| Error::SendOutput)?;
+            for event in <Vec<Event>>::from(response) {
+                tx.send(event).await.map_err(|_| Error::SendOutput)?;
+            }
             Ok::<(), Error>(())
         });
     }
 
-    fn complete_stream(&self, messages: Vec<Message>, tx: tokio::sync::mpsc::Sender<Response>) {
+    fn complete_stream(&self, messages: Vec<Message>, tx: tokio::sync::mpsc::Sender<Event>) {
         let request = self.build_request(messages);
         let provider = self.provider.clone();
         tokio::spawn(async move {
             let stream = provider.complete_stream(request).await?;
             let mut stream = stream;
             while let Some(response) = stream.next().await {
-                tracing::debug!("response: {:?}", response);
                 tx.send(response?).await.map_err(|_| Error::SendOutput)?;
             }
             Ok::<(), Error>(())
         });
     }
 
-    fn handle_input(&self, messages: Vec<Message>, tx: tokio::sync::mpsc::Sender<Response>) {
+    fn handle_input(&self, messages: Vec<Message>, tx: tokio::sync::mpsc::Sender<Event>) {
         if self.config.stream {
             self.complete_stream(messages, tx);
         } else {
@@ -108,7 +109,7 @@ mod tests {
             role: "user".to_string(),
             content: "Testing: Hello, world!".to_string(),
         }];
-        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(100);
         assistant.complete(test_messages, tx);
         println!("response: {:?}", rx.recv().await.unwrap());
         Ok(())

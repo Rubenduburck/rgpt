@@ -5,14 +5,15 @@ use crate::anthropic::types::{CompleteRequest, CompleteResponse, CompleteRespons
 use crate::anthropic::{API_BASE, API_VERSION, API_VERSION_HEADER_KEY, AUTHORIZATION_HEADER_KEY};
 use reqwest::header::{HeaderMap, ACCEPT, CONTENT_TYPE};
 
+use reqwest_eventsource::Event;
 use rgpt_caller::client::Client;
 use tokio_stream::Stream;
 
-use super::types::{MessagesRequest, MessagesResponse};
+use super::types::{MessagesEvent, MessagesRequest, MessagesResponse};
 use super::{CLIENT_ID, CLIENT_ID_HEADER_KEY};
 
-pub type MessagesResponseStream =
-    Pin<Box<dyn Stream<Item = Result<MessagesResponse, Error>> + Send>>;
+pub type MessagesEventStream =
+    Pin<Box<dyn Stream<Item = Result<MessagesEvent, Error>> + Send>>;
 
 use rgpt_utils::stream::adapt_stream;
 
@@ -43,6 +44,11 @@ impl Provider {
         R: Into<MessagesRequest>,
     {
         let request = request.into();
+        if request.stream {
+            return Err(Error::InvalidArgument(
+                "When stream is true, use messages_stream() instead".into(),
+            ));
+        }
         tracing::debug!("request: {:?}", request);
         Ok(self
             .caller
@@ -50,16 +56,39 @@ impl Provider {
             .await?)
     }
 
-    pub async fn messages_stream<R>(&self, request: R) -> Result<MessagesResponseStream, Error>
+    pub async fn messages_stream<R>(&self, request: R) -> Result<MessagesEventStream, Error>
     where
         R: Into<MessagesRequest>,
     {
         let request = request.into();
+        if !request.stream {
+            return Err(Error::InvalidArgument(
+                "When stream is false, use messages() instead".into(),
+            ));
+        }
         let stream = self
             .caller
-            .post_stream(&format!("{}/v1/messages", API_BASE), request)
+            .post_stream(&format!("{}/v1/messages", API_BASE), request, Self::messages_handler)
             .await;
-        Ok(adapt_stream(stream, |res| res.map_err(Into::into)))
+        Ok(stream?)
+    }
+
+    pub fn messages_handler(event: reqwest_eventsource::Event) -> Result<MessagesEvent, Error>
+    {
+        tracing::debug!("event: {:?}", event);
+        match event{
+            Event::Open => Ok(MessagesEvent::MessageOpen),
+            Event::Message(message) => {
+                match serde_json::from_str::<MessagesEvent>(&message.data){
+                    Ok(event) => Ok(event),
+                    Err(e) => {
+                        tracing::error!("error deserializing event: {:?}", e);
+                        Err(Error::JSONDeserialize(e))
+                    }
+                }
+            },
+
+        }
     }
 
     pub async fn complete<R>(&self, request: R) -> Result<CompleteResponse, Error>
@@ -78,7 +107,7 @@ impl Provider {
             .await?)
     }
 
-    pub async fn complete_stream<R>(&self, request: R) -> Result<CompleteResponseStream, Error>
+    pub async fn complete_stream<R>(&self, request: R) -> Result<MessagesEventStream, Error>
     where
         R: Into<CompleteRequest>,
     {
@@ -88,10 +117,22 @@ impl Provider {
                 "When stream is false, use complete() instead".into(),
             ));
         }
-        Ok(self
+        let stream = self
             .caller
-            .post_stream(&format!("{}/v1/complete", API_BASE), request)
-            .await)
+            .post_stream(&format!("{}/v1/complete", API_BASE), request, Self::complete_handler)
+            .await;
+        Ok(stream?)
+    }
+
+    pub fn complete_handler(event: reqwest_eventsource::Event) -> Result<MessagesEvent, Error> {
+        match event {
+            Event::Open => Ok(MessagesEvent::MessageOpen),
+            Event::Message(message) => {
+                let event = serde_json::from_str::<MessagesEvent>(&message.data)?;
+                tracing::debug!("event: {:?}", event);
+                Ok(event)
+            }
+        }
     }
 }
 

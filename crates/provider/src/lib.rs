@@ -1,7 +1,7 @@
 use std::pin::Pin;
 
 use error::Error;
-use rgpt_types::completion::{Request, Response};
+use rgpt_types::completion::{Event, Request, Response};
 
 use rgpt_utils::stream::adapt_stream;
 use tokio_stream::Stream;
@@ -16,6 +16,7 @@ pub enum Provider {
 }
 
 pub type ResponseStream = Pin<Box<dyn Stream<Item = Result<Response, Error>> + Send>>;
+pub type EventsStream = Pin<Box<dyn Stream<Item = Result<Event, Error>> + Send>>;
 
 impl Provider {
     pub async fn complete(&self, request: Request) -> Result<Response, Error> {
@@ -25,7 +26,7 @@ impl Provider {
         .into())
     }
 
-    pub async fn complete_stream(&self, request: Request) -> Result<ResponseStream, Error> {
+    pub async fn complete_stream(&self, request: Request) -> Result<EventsStream, Error> {
         let stream = match self {
             Self::Anthropic(provider) => provider.messages_stream(request).await,
         }?;

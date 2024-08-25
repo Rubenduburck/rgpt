@@ -37,7 +37,6 @@ impl Session {
             let mut stdout = tokio::io::stdout();
             while let Some(output) = output_rx.recv().await {
                 stdout.write_all(output.as_bytes()).await?;
-                stdout.write_all(b"\n").await?;
                 stdout.flush().await?;
             }
             Ok(())
@@ -81,9 +80,9 @@ pub struct SessionInner {
 
 impl SessionInner {
     fn new(assistant: Assistant) -> (Self, UserInputTx, SystemOutputRx, UserKillTx) {
-        let (input_tx, input_rx) = tokio::sync::mpsc::channel(1);
-        let (output_tx, output_rx) = tokio::sync::mpsc::channel(1);
-        let (kill_tx, kill_rx) = tokio::sync::mpsc::channel(1);
+        let (input_tx, input_rx) = tokio::sync::mpsc::channel(100);
+        let (output_tx, output_rx) = tokio::sync::mpsc::channel(100);
+        let (kill_tx, kill_rx) = tokio::sync::mpsc::channel(100);
 
         let session = SessionInner {
             input_rx,
@@ -103,15 +102,22 @@ impl SessionInner {
             }
             self.buffer.push(input.into());
 
-            let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+            let (tx, mut rx) = tokio::sync::mpsc::channel(100);
             self.assistant.handle_input(self.buffer.clone(), tx);
+            self.buffer.clear();
             loop {
                 tokio::select! {
                     _ = self.kill_rx.recv() => break,
-                    response = rx.recv() => {
-                        if let Some(response) = response {
-                            for content in response.content {
-                                self.output_tx.send(content.text).await?;
+                    event = rx.recv() => {
+                        if let Some(event) = event {
+                            if let Some(text) = event.text() {
+                                self.output_tx.send(text.clone()).await?;
+                            }
+                            if event.is_stop() {
+                                self.output_tx.send("\n".to_string()).await?;
+                            }
+                            if event.is_complete() {
+                                break;
                             }
                         } else {
                             break;
@@ -120,7 +126,6 @@ impl SessionInner {
                 }
             }
 
-            self.buffer.clear();
             self.output_tx.send("> ".to_string()).await?;
         }
         Ok(())
