@@ -12,6 +12,9 @@ repository = "https://github.com/rubenduburck/rgpt"
 [workspace.dependencies]
 rgpt-types = { path = "crates/types" }
 rgpt-caller = { path = "crates/caller" }
+rgpt-utils = { path = "crates/utils" }
+rgpt-provider = { path = "crates/provider" }
+rgpt-assistant = { path = "crates/assistant" }
 
 # Logging
 tracing = "0.1.40"

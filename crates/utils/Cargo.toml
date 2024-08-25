@@ -1,0 +1,8 @@
+[package]
+name = "rgpt-utils"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tracing = "0.1.27"
+tracing-subscriber = "0.3.18"

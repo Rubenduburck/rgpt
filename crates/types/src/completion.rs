@@ -1,37 +1,68 @@
 use std::collections::HashMap;
 use std::iter::Iterator;
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Serialize, Debug, PartialEq)]
+pub struct CompleteRequest {
+    /// The prompt to complete.
+    pub prompt: String,
+    /// The model to use.
+    pub model: String,
+    /// The number of tokens to sample.
+    pub max_tokens_to_sample: usize,
+    /// The stop sequences to use.
+    pub stop_sequences: Option<Vec<String>>,
+    /// Whether to incrementally stream the response.
+    pub stream: bool,
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq, Serialize)]
+pub struct CompleteResponse {
+    pub completion: String,
+    pub stop_reason: Option<StopReason>,
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StopReason {
+    MaxTokens,
+    StopSequence,
+}
+
+
 
 // Equivalent to TypedDict in Python
-#[derive(Debug, Clone)]
-struct Message {
-    role: String,
-    content: String,
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Message {
+    pub role: String,
+    pub content: String,
 }
 
 // Equivalent to TypedDict with total=False
-#[derive(Debug, Clone, Default)]
-struct ModelOverrides {
-    model: Option<String>,
-    temperature: Option<f32>,
-    top_p: Option<f32>,
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct ModelOverrides {
+    pub model: Option<String>,
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
 }
 
 // Equivalent to TypedDict
-#[derive(Debug, Clone)]
-struct Pricing {
-    prompt: f32,
-    response: f32,
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Pricing {
+    pub prompt: f32,
+    pub response: f32,
 }
 
 // Equivalent to dataclass
-#[derive(Debug, Clone)]
-struct MessageDeltaEvent {
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MessageDeltaEvent<'a> {
     text: String,
     #[allow(dead_code)]
-    r#type: &'static str,
+    #[serde(rename = "type")]
+    r#type: &'a str,
 }
 
-impl MessageDeltaEvent {
+impl <'a>MessageDeltaEvent<'a> {
     fn new(text: String) -> Self {
         Self {
             text,
@@ -41,17 +72,18 @@ impl MessageDeltaEvent {
 }
 
 // Equivalent to dataclass
-#[derive(Debug, Clone)]
-struct UsageEvent {
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct UsageEvent<'a> {
     prompt_tokens: i32,
     completion_tokens: i32,
     total_tokens: i32,
     cost: f32,
     #[allow(dead_code)]
-    r#type: &'static str,
+    #[serde(rename = "type")]
+    r#type: &'a str,
 }
 
-impl UsageEvent {
+impl <'a>UsageEvent<'a> {
     fn new(prompt_tokens: i32, completion_tokens: i32, total_tokens: i32, cost: f32) -> Self {
         Self {
             prompt_tokens,
@@ -78,13 +110,14 @@ impl UsageEvent {
 }
 
 // Equivalent to Union
-enum CompletionEvent {
-    MessageDelta(MessageDeltaEvent),
-    Usage(UsageEvent),
+#[derive(Debug, Clone)]
+pub enum CompletionEvent<'a> {
+    MessageDelta(MessageDeltaEvent<'a>),
+    Usage(UsageEvent<'a>),
 }
 
 // Equivalent to abstract base class
-trait CompletionProvider {
+pub trait CompletionProvider {
     fn complete(
         &self,
         messages: &[Message],
@@ -94,11 +127,11 @@ trait CompletionProvider {
 }
 
 // Custom error types
-#[derive(Debug)]
-struct CompletionError;
+#[derive(Debug, Deserialize, Serialize)]
+pub struct CompletionError;
 
-#[derive(Debug)]
-struct BadRequestError;
+#[derive(Debug, Deserialize, Serialize)]
+pub struct BadRequestError;
 
 impl std::error::Error for CompletionError {}
 impl std::fmt::Display for CompletionError {

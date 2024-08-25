@@ -1,17 +1,15 @@
 use crate::anthropic::error::Error;
 use crate::anthropic::types::{CompleteRequest, CompleteResponse, CompleteResponseStream};
-use crate::anthropic::{
-    API_VERSION, API_VERSION_HEADER_KEY, AUTHORIZATION_HEADER_KEY, DEFAULT_API_BASE, DEFAULT_MODEL,
-};
+use crate::anthropic::{API_BASE, API_VERSION, API_VERSION_HEADER_KEY, AUTHORIZATION_HEADER_KEY};
 use reqwest::header::{HeaderMap, ACCEPT, CONTENT_TYPE};
 
 use rgpt_caller::client::Client;
 
+use super::types::{MessagesRequest, MessagesResponse, MessagesResponseStream};
+
 #[derive(Debug)]
 pub struct Provider {
     pub api_key: String,
-    pub api_base: String,
-    pub default_model: String,
     caller: Client,
 }
 
@@ -27,12 +25,24 @@ impl Provider {
         headers.insert(ACCEPT, "application/json".parse().unwrap());
         headers.insert(API_VERSION_HEADER_KEY, API_VERSION.parse().unwrap());
         let caller = Client::new(headers);
-        Self {
-            api_key,
-            api_base: DEFAULT_API_BASE.to_string(),
-            default_model: DEFAULT_MODEL.to_string(),
-            caller,
-        }
+        Self { api_key, caller }
+    }
+
+    pub async fn messages(&self, request: MessagesRequest) -> Result<MessagesResponse, Error> {
+        Ok(self
+            .caller
+            .post(&format!("{}/v1/messages", API_BASE), request)
+            .await?)
+    }
+
+    pub async fn messages_stream(
+        &self,
+        request: MessagesRequest,
+    ) -> Result<MessagesResponseStream, Error> {
+        Ok(self
+            .caller
+            .post_stream(&format!("{}/v1/messages", API_BASE), request)
+            .await)
     }
 
     pub async fn complete(&self, request: CompleteRequest) -> Result<CompleteResponse, Error> {
@@ -43,7 +53,7 @@ impl Provider {
         }
         Ok(self
             .caller
-            .post(&format!("{}/v1/complete", self.api_base), request)
+            .post(&format!("{}/v1/complete", API_BASE), request)
             .await?)
     }
 
@@ -58,13 +68,15 @@ impl Provider {
         }
         Ok(self
             .caller
-            .post_stream(&format!("{}/v1/complete", self.api_base), request)
+            .post_stream(&format!("{}/v1/complete", API_BASE), request)
             .await)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::anthropic::types::Message;
+
     use super::super::{AI_PROMPT, HUMAN_PROMPT};
     use super::*;
 
@@ -77,13 +89,40 @@ mod tests {
         let client = Provider::new(api_key);
         let request = CompleteRequest {
             prompt,
-            model: "claude-v1".into(),
-            max_tokens_to_sample: 256,
-            stop_sequences: vec![HUMAN_PROMPT.to_string()].into(),
-            stream: false,
+            ..Default::default()
         };
 
         let response = client.complete(request).await.unwrap();
+        println!("response: {:?}", response);
+        Err("test not implemented".into())
+    }
+
+    #[tokio::test]
+    async fn test_messages() -> Result<(), Box<dyn std::error::Error>> {
+        let messages = vec![
+            Message {
+                role: "user".into(),
+                content: "A human walks into a bar".into(),
+            },
+            Message {
+                role: "assistant".into(),
+                content: "The bartender says, 'What can I get you?'".into(),
+            },
+            Message {
+                role: "user".into(),
+                content: "The human says, 'I'll have a beer'".into(),
+            },
+        ];
+
+        // get the api key from the environment
+        let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap();
+        let client = Provider::new(api_key);
+        let request = MessagesRequest {
+            messages,
+            ..Default::default()
+        };
+
+        let response = client.messages(request).await.unwrap();
         println!("response: {:?}", response);
         Err("test not implemented".into())
     }

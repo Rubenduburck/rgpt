@@ -2,6 +2,7 @@ pub mod provider;
 pub mod config;
 pub mod error;
 pub mod types;
+pub mod api_key;
 
 /// A constant to represent the human prompt.
 pub const HUMAN_PROMPT: &str = "\n\nHuman:";
@@ -9,9 +10,10 @@ pub const HUMAN_PROMPT: &str = "\n\nHuman:";
 pub const AI_PROMPT: &str = "\n\nAssistant:";
 
 /// Default model to use.
-pub const DEFAULT_MODEL: &str = "claude-v1";
+pub const DEFAULT_MODEL: &str = "claude-instant-1.2";
+pub const DEFAULT_MAX_TOKENS: usize = 100;
 /// Default v1 API base url.
-pub const DEFAULT_API_BASE: &str = "https://api.anthropic.com";
+pub const API_BASE: &str = "https://api.anthropic.com";
 /// Auth header key.
 const AUTHORIZATION_HEADER_KEY: &str = "x-api-key";
 /// Client id header key.
