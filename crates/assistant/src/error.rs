@@ -24,4 +24,7 @@ pub enum Error {
 
     #[error("Join error")]
     Join(#[from] tokio::task::JoinError),
+
+    #[error("State error")]
+    State,
 }

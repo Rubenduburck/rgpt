@@ -1,4 +1,4 @@
-use rgpt_types::completion::{TextEvent, Request};
+use rgpt_types::completion::{Request, TextEvent};
 use serde::{Deserialize, Serialize};
 
 use crate::anthropic::DEFAULT_MODEL;
@@ -97,17 +97,17 @@ pub struct MessagesRequest {
 
 impl From<Request> for MessagesRequest {
     fn from(val: Request) -> Self {
-        let (system, messages) = val.messages.into_iter().fold(
-            (None, vec![]),
-            |(system, mut messages), message| {
-                if message.role == "system" {
-                    (Some(message.content), messages)
-                } else {
-                    messages.push(message.into());
-                    (system, messages)
-                }
-            },
-        );
+        let (system, messages) =
+            val.messages
+                .into_iter()
+                .fold((None, vec![]), |(system, mut messages), message| {
+                    if message.role == "system" {
+                        (Some(message.content), messages)
+                    } else {
+                        messages.push(message.into());
+                        (system, messages)
+                    }
+                });
         MessagesRequest {
             messages,
             model: val.model.unwrap_or(DEFAULT_MODEL.to_string()),
@@ -206,10 +206,20 @@ pub enum MessagesEvent {
     MessageStart {
         message: MessageStartData,
     },
-    ContentBlockStart { index: usize, content_block: ContentBlock },
-    ContentBlockDelta { index: usize, delta: Delta },
-    ContentBlockStop { index: usize },
-    MessageDelta { delta: MessageDelta },
+    ContentBlockStart {
+        index: usize,
+        content_block: ContentBlock,
+    },
+    ContentBlockDelta {
+        index: usize,
+        delta: Delta,
+    },
+    ContentBlockStop {
+        index: usize,
+    },
+    MessageDelta {
+        delta: MessageDelta,
+    },
     MessageStop,
 }
 
@@ -237,32 +247,39 @@ pub struct MessageDelta {
 #[serde(rename_all = "snake_case")]
 #[serde(tag = "type")]
 pub enum ContentBlock {
-    Text{ text: String },
+    Text { text: String },
 }
 
 #[derive(Debug, Deserialize, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
 #[serde(tag = "type")]
 pub enum Delta {
-    TextDelta{ text: String },
+    TextDelta { text: String },
 }
 
 impl From<MessagesEvent> for TextEvent {
     fn from(event: MessagesEvent) -> Self {
         match event {
             MessagesEvent::Ping => TextEvent::Null,
-            MessagesEvent::MessageStart { message } => {
-                TextEvent::MessageStart { message: message.into() }
-            }
+            MessagesEvent::MessageStart { message } => TextEvent::MessageStart {
+                message: message.into(),
+            },
             MessagesEvent::MessageOpen => TextEvent::Null,
             MessagesEvent::ContentBlockStop { index } => TextEvent::ContentBlockStop { index },
-            MessagesEvent::ContentBlockStart { index, content_block } => {
-                TextEvent::ContentBlockStart { index, content_block: content_block.into() }
-            }
-            MessagesEvent::ContentBlockDelta { index, delta } => {
-                TextEvent::ContentBlockDelta { index, delta: delta.into() }
-            }
-            MessagesEvent::MessageDelta { delta } => TextEvent::MessageDelta { delta: delta.into() },
+            MessagesEvent::ContentBlockStart {
+                index,
+                content_block,
+            } => TextEvent::ContentBlockStart {
+                index,
+                content_block: content_block.into(),
+            },
+            MessagesEvent::ContentBlockDelta { index, delta } => TextEvent::ContentBlockDelta {
+                index,
+                delta: delta.into(),
+            },
+            MessagesEvent::MessageDelta { delta } => TextEvent::MessageDelta {
+                delta: delta.into(),
+            },
             MessagesEvent::MessageStop => TextEvent::MessageStop,
         }
     }
@@ -276,7 +293,7 @@ impl From<ContentBlock> for rgpt_types::completion::ContentBlock {
     }
 }
 
-impl From<Delta> for rgpt_types::completion::Delta {
+impl From<Delta> for rgpt_types::completion::ContentDelta {
     fn from(delta: Delta) -> Self {
         match delta {
             Delta::TextDelta { text } => Self::TextDelta { text },
@@ -287,7 +304,9 @@ impl From<Delta> for rgpt_types::completion::Delta {
 impl From<MessageDelta> for rgpt_types::completion::MessageDelta {
     fn from(delta: MessageDelta) -> Self {
         Self {
-            stop_reason: delta.stop_reason.map(rgpt_types::completion::StopReason::from),
+            stop_reason: delta
+                .stop_reason
+                .map(rgpt_types::completion::StopReason::from),
             stop_sequence: delta.stop_sequence,
         }
     }
@@ -300,8 +319,14 @@ impl From<MessageStartData> for rgpt_types::completion::MessageStartData {
             type_: data.type_,
             role: data.role,
             model: data.model,
-            content: data.content.into_iter().map(rgpt_types::completion::Content::from).collect(),
-            stop_reason: data.stop_reason.map(rgpt_types::completion::StopReason::from),
+            content: data
+                .content
+                .into_iter()
+                .map(rgpt_types::completion::Content::from)
+                .collect(),
+            stop_reason: data
+                .stop_reason
+                .map(rgpt_types::completion::StopReason::from),
             stop_sequence: data.stop_sequence,
             usage: data.usage.into(),
         }

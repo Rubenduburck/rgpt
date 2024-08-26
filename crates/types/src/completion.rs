@@ -170,7 +170,7 @@ pub enum TextEvent {
     },
     ContentBlockDelta {
         index: usize,
-        delta: Delta,
+        delta: ContentDelta,
     },
     ContentBlockStop {
         index: usize,
@@ -184,12 +184,8 @@ pub enum TextEvent {
 impl TextEvent {
     pub fn text(&self) -> Option<String> {
         match self {
-            TextEvent::ContentBlockStart { content_block, .. } => match content_block {
-                ContentBlock::Text { text } => Some(text.clone()),
-            },
-            TextEvent::ContentBlockDelta { delta, .. } => match delta {
-                Delta::TextDelta { text } => Some(text.clone()),
-            },
+            TextEvent::ContentBlockStart { content_block, .. } => content_block.text(),
+            TextEvent::ContentBlockDelta { delta, .. } => delta.text(),
             TextEvent::ContentBlockStop { .. } => Some("\n".to_string()),
             _ => None,
         }
@@ -240,11 +236,42 @@ pub struct MessageDelta {
 #[serde(tag = "type")]
 pub enum ContentBlock {
     Text { text: String },
+    Other,
+}
+
+impl ContentBlock {
+    pub fn update(&mut self, delta: &ContentDelta) {
+        match (self, delta) {
+            (ContentBlock::Text { text }, ContentDelta::TextDelta { text: ref delta }) => {
+                text.push_str(delta);
+            }
+            _ => {
+                tracing::error!("Invalid delta update");
+            }
+        }
+    }
+
+    pub fn text(&self) -> Option<String> {
+        match self {
+            ContentBlock::Text { text } => Some(text.clone()),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
 #[serde(tag = "type")]
-pub enum Delta {
+pub enum ContentDelta {
     TextDelta { text: String },
+    Other,
+}
+
+impl ContentDelta {
+    pub fn text(&self) -> Option<String> {
+        match self {
+            ContentDelta::TextDelta { text } => Some(text.clone()),
+            _ => None,
+        }
+    }
 }

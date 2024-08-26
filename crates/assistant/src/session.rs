@@ -1,4 +1,8 @@
-use rgpt_types::message::Message;
+use rgpt_state::State;
+use rgpt_types::{
+    completion::{ContentBlock, TextEvent},
+    message::Message,
+};
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _};
 
 use crate::{error::Error, Assistant};
@@ -156,7 +160,7 @@ pub struct SessionInner {
     output_tx: SystemOutputTx,
     cancel_rx: UserKillRx,
     assistant: Assistant,
-    buffer: Vec<Message>,
+    state: State,
 }
 
 impl SessionInner {
@@ -170,37 +174,35 @@ impl SessionInner {
             output_tx,
             cancel_rx,
             assistant,
-            buffer: vec![],
+            state: State::new(),
         };
 
         (session, input_tx, output_rx, cancel_tx)
-    }
-
-    async fn draw(&mut self, event: &rgpt_types::completion::TextEvent) -> Result<(), Error> {
-        if let Some(text) = event.text() {
-            self.output_tx
-                .send(text.clone())
-                .await
-                .map_err(|_| Error::SendOutput)?;
-        }
-        if event.is_stop() {
-            self.output_tx
-                .send("\n".to_string())
-                .await
-                .map_err(|_| Error::SendOutput)?;
-        }
-        Ok(())
     }
 
     async fn handle_input(&mut self, input: String) -> Result<(), Error> {
         if input == "exit" {
             return Err(Error::Exit);
         }
-        self.buffer.push(input.into());
+        self.state
+            .push_user_event(TextEvent::ContentBlockStart {
+                index: 0,
+                content_block: ContentBlock::Text { text: input },
+            })
+            .await
+            .map_err(|_| Error::State)?;
+        self.state
+            .push_user_event(TextEvent::ContentBlockStop { index: 0 })
+            .await
+            .map_err(|_| Error::State)?;
 
         let (tx, mut rx) = tokio::sync::mpsc::channel(100);
-        self.assistant.handle_input(self.buffer.clone(), tx);
-        self.buffer.clear();
+        let messages = self
+            .state
+            .get_user_messages()
+            .await
+            .map_err(|_| Error::State)?;
+        self.assistant.handle_input(messages, tx);
         'outer: loop {
             tokio::select! {
                 _ = self.cancel_rx.recv() => {
@@ -208,8 +210,8 @@ impl SessionInner {
                     return Err(Error::Exit);
                 }
                 event = rx.recv() => {
-                    if let Some(event) = event {
-                        self.draw(&event).await?;
+                    if let Some(ref event) = event {
+                        self.state.push_assistant_event(event.clone()).await.map_err(|_| Error::State)?;
                         if event.is_complete() {
                             tracing::debug!("completed");
                             break 'outer;
@@ -237,10 +239,6 @@ impl SessionInner {
                 Err(Error::Exit) => break,
                 Err(e) => return Err(e),
             }
-            self.output_tx
-                .send("> ".to_string())
-                .await
-                .map_err(|_| Error::SendOutput)?;
         }
         Ok(())
     }
