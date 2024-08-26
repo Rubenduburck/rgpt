@@ -35,4 +35,3 @@ pub struct ApiError {
     pub param: Option<serde_json::Value>,
     pub code: Option<serde_json::Value>,
 }
-

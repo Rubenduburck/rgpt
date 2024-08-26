@@ -12,8 +12,7 @@ use tokio_stream::Stream;
 use super::types::{MessagesEvent, MessagesRequest, MessagesResponse};
 use super::{CLIENT_ID, CLIENT_ID_HEADER_KEY};
 
-pub type MessagesEventStream =
-    Pin<Box<dyn Stream<Item = Result<MessagesEvent, Error>> + Send>>;
+pub type MessagesEventStream = Pin<Box<dyn Stream<Item = Result<MessagesEvent, Error>> + Send>>;
 
 #[derive(Debug)]
 pub struct Provider {
@@ -66,26 +65,26 @@ impl Provider {
         }
         let stream = self
             .caller
-            .post_stream(&format!("{}/v1/messages", API_BASE), request, Self::messages_handler)
+            .post_stream(
+                &format!("{}/v1/messages", API_BASE),
+                request,
+                Self::messages_handler,
+            )
             .await;
         Ok(stream?)
     }
 
-    pub fn messages_handler(event: reqwest_eventsource::Event) -> Result<MessagesEvent, Error>
-    {
+    pub fn messages_handler(event: reqwest_eventsource::Event) -> Result<MessagesEvent, Error> {
         tracing::debug!("event: {:?}", event);
-        match event{
+        match event {
             Event::Open => Ok(MessagesEvent::MessageOpen),
-            Event::Message(message) => {
-                match serde_json::from_str::<MessagesEvent>(&message.data){
-                    Ok(event) => Ok(event),
-                    Err(e) => {
-                        tracing::error!("error deserializing event: {:?}", e);
-                        Err(Error::JSONDeserialize(e))
-                    }
+            Event::Message(message) => match serde_json::from_str::<MessagesEvent>(&message.data) {
+                Ok(event) => Ok(event),
+                Err(e) => {
+                    tracing::error!("error deserializing event: {:?}", e);
+                    Err(Error::JSONDeserialize(e))
                 }
             },
-
         }
     }
 
@@ -117,7 +116,11 @@ impl Provider {
         }
         let stream = self
             .caller
-            .post_stream(&format!("{}/v1/complete", API_BASE), request, Self::complete_handler)
+            .post_stream(
+                &format!("{}/v1/complete", API_BASE),
+                request,
+                Self::complete_handler,
+            )
             .await;
         Ok(stream?)
     }

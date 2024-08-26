@@ -1,7 +1,7 @@
-pub mod provider;
-pub mod error;
-pub mod types;
 pub mod api_key;
+pub mod error;
+pub mod provider;
+pub mod types;
 
 /// A constant to represent the human prompt.
 pub const _HUMAN_PROMPT: &str = "\n\nHuman:";

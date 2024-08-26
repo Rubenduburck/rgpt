@@ -1,7 +1,7 @@
 use std::pin::Pin;
 
 use error::Error;
-use rgpt_types::completion::{TextEvent, Request, Response};
+use rgpt_types::completion::{Request, Response, TextEvent};
 
 use rgpt_utils::stream::adapt_stream;
 use tokio_stream::Stream;
@@ -30,6 +30,8 @@ impl Provider {
         let stream = match self {
             Self::Anthropic(provider) => provider.messages_stream(request).await,
         }?;
-        Ok(adapt_stream(stream, |res| res.map(Into::into).map_err(Into::into)))
+        Ok(adapt_stream(stream, |res| {
+            res.map(Into::into).map_err(Into::into)
+        }))
     }
 }

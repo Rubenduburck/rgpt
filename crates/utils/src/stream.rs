@@ -30,7 +30,10 @@ where
     }
 }
 
-pub fn adapt_stream<S, F, T1, E1, T2, E2>(stream: S, f: F) -> Pin<Box<dyn Stream<Item = Result<T2, E2>> + Send>>
+pub fn adapt_stream<S, F, T1, E1, T2, E2>(
+    stream: S,
+    f: F,
+) -> Pin<Box<dyn Stream<Item = Result<T2, E2>> + Send>>
 where
     S: Stream<Item = Result<T1, E1>> + Send + 'static,
     F: Fn(Result<T1, E1>) -> Result<T2, E2> + Send + 'static,

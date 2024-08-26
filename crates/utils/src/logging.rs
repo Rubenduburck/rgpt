@@ -12,4 +12,3 @@ pub fn init_logger() {
         .with(fmt_layer)
         .init();
 }
-

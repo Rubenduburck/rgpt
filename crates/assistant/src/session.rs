@@ -35,7 +35,7 @@ macro_rules! enclose {
 
 impl Session {
     pub fn setup(assistant: Assistant) -> Result<Self, Error> {
-        let (inner, input_tx, output_rx, cancel_tx) = SessionInner::new(assistant);
+        let (inner, input_tx, cancel_tx) = SessionInner::new(assistant);
 
         let mut kill_txs = Vec::new();
 
@@ -45,14 +45,6 @@ impl Session {
                 tracing::error!("error: {}", e)
             }
         }});
-        kill_txs.push(kill_tx);
-
-        let (kill_tx, kill_rx) = tokio::sync::mpsc::channel(1);
-        tokio::spawn(async move {
-            if let Err(e) = Self::handle_output(output_rx, kill_rx).await {
-                tracing::error!("error: {}", e)
-            }
-        });
         kill_txs.push(kill_tx);
 
         Ok(Session {
@@ -157,27 +149,24 @@ impl Session {
 
 pub struct SessionInner {
     input_rx: UserInputRx,
-    output_tx: SystemOutputTx,
     cancel_rx: UserKillRx,
     assistant: Assistant,
     state: State,
 }
 
 impl SessionInner {
-    fn new(assistant: Assistant) -> (Self, UserInputTx, SystemOutputRx, UserKillTx) {
+    fn new(assistant: Assistant) -> (Self, UserInputTx, UserKillTx) {
         let (input_tx, input_rx) = tokio::sync::mpsc::channel(100);
-        let (output_tx, output_rx) = tokio::sync::mpsc::channel(100);
         let (cancel_tx, cancel_rx) = tokio::sync::mpsc::channel(1);
 
         let session = SessionInner {
             input_rx,
-            output_tx,
             cancel_rx,
             assistant,
             state: State::new(),
         };
 
-        (session, input_tx, output_rx, cancel_tx)
+        (session, input_tx, cancel_tx)
     }
 
     async fn handle_input(&mut self, input: String) -> Result<(), Error> {
@@ -277,7 +266,7 @@ mod tests {
     async fn test_session() -> Result<(), Box<dyn std::error::Error>> {
         let cfg = get_config();
         let assistant = Assistant::new(cfg)?;
-        let (mut session, input_tx, mut output_rx, _kill_tx) = SessionInner::new(assistant);
+        let (mut session, input_tx, _kill_tx) = SessionInner::new(assistant);
 
         tokio::spawn(async move {
             input_tx
@@ -293,8 +282,6 @@ mod tests {
             }
         });
 
-        let output = output_rx.recv().await.unwrap();
-        tracing::debug!("output: {}", output);
         Ok(())
     }
 }

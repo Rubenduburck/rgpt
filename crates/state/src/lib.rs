@@ -1,11 +1,10 @@
-use std::io::{stdout, Stdout, Write as _};
+use std::io::{stdout, Write as _};
 
 use crossterm::{
-    cursor::{MoveTo, MoveToNextLine, RestorePosition, SavePosition},
+    cursor::MoveTo,
     execute,
     style::{Color, SetForegroundColor},
     terminal::{Clear, ClearType},
-    QueueableCommand as _,
 };
 use rgpt_types::{
     completion::{ContentBlock, ContentDelta, MessageStartData, TextEvent},
@@ -45,7 +44,7 @@ impl StateInner {
         // Clear the screen
         execute!(stdout(), Clear(ClearType::All), MoveTo(0, 0))?;
 
-        let mut current_line = 0;
+        let mut _current_line = 0;
 
         // Determine the maximum number of buffers
         let max_buffers = self.user_buffers.len().max(self.assistant_buffers.len());
@@ -56,10 +55,10 @@ impl StateInner {
             if i < self.user_buffers.len() {
                 execute!(stdout(), SetForegroundColor(Color::Blue))?;
                 println!("User:");
-                current_line += 1;
+                _current_line += 1;
                 for block in &self.user_buffers[i] {
                     println!("  {}", block.text().unwrap_or_default());
-                    current_line += 1;
+                    _current_line += 1;
                 }
             }
 
@@ -67,10 +66,10 @@ impl StateInner {
             if i < self.assistant_buffers.len() {
                 execute!(stdout(), SetForegroundColor(Color::Green))?;
                 println!("Assistant:");
-                current_line += 1;
+                _current_line += 1;
                 for block in &self.assistant_buffers[i] {
                     println!("  {}", block.text().unwrap_or_default());
-                    current_line += 1;
+                    _current_line += 1;
                 }
             }
         }

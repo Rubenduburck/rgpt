@@ -19,10 +19,7 @@ struct Args {
 
 impl Args {
     async fn execute(&self) -> Result<(), Error> {
-        let cfg = Config::builder()
-            .mode(&self.mode)
-            .stream(true)
-            .build();
+        let cfg = Config::builder().mode(&self.mode).stream(true).build();
         let messages = self
             .input
             .as_ref()
