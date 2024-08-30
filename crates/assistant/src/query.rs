@@ -128,6 +128,10 @@ impl Query {
                     // Ensure everything is flushed
                     std::io::stdout().flush()?;
                     std::io::stderr().flush()?;
+
+                    if !output.stdout.ends_with(b"\n") && !output.stderr.ends_with(b"\n") {
+                        println!();
+                    }
                 }
             }
         }
