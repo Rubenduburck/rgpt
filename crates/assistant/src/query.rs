@@ -29,6 +29,7 @@ impl QueryState {
         if self.messages.len() <= index {
             self.messages.resize(index + 1, vec![]);
         }
+        self.line_no += msg.iter().filter(|&&b| b == b'\n').count();
         self.messages
             .get_mut(index)
             .unwrap()
@@ -105,43 +106,62 @@ impl Query {
         }
 
         if self.execute {
-            std::io::stdout().write_all(b"\n")?;
-            match Self::select(&self.state.get_code_blocks()) {
+            // Clear the current line instead of adding a newline
+            print!("\r\x1b[K");
+            std::io::stdout().flush()?;
+
+            match self.select(&self.state.get_code_blocks()) {
                 None => {}
                 Some(code) => {
                     let mut cmd = Command::new("bash");
                     cmd.stdin(std::process::Stdio::piped());
+                    cmd.stdout(std::process::Stdio::piped());
+                    cmd.stderr(std::process::Stdio::piped());
                     let mut child = cmd.spawn()?;
                     child.stdin.as_mut().unwrap().write_all(&code)?;
                     let output = child.wait_with_output()?;
+
+                    // Print both stdout and stderr
                     std::io::stdout().write_all(&output.stdout)?;
+                    std::io::stderr().write_all(&output.stderr)?;
+
+                    // Ensure everything is flushed
+                    std::io::stdout().flush()?;
+                    std::io::stderr().flush()?;
                 }
             }
         }
-
         Ok(())
     }
 
-    fn select(code_blocks: &[CodeBlock]) -> Option<CodeBlock> {
+    fn select(&self, code_blocks: &[CodeBlock]) -> Option<CodeBlock> {
+        // Jump back up self.state.line_no lines
+        for _ in 0..self.state.line_no + 1 {
+            let _ = std::io::stdout().write_all(b"\x1b[A");
+        }
+        std::io::stdout().flush().unwrap();
+
         let exit = [Query::ANSI_BLUE_START, b"exit ", Query::ANSI_BLUE_END].concat();
-        let exec = [Query::ANSI_GREEN_START, b"exec ", Query::ANSI_GREEN_END].concat();
         if code_blocks.is_empty() {
             return None;
         }
 
-        let selections = std::iter::once(String::from_utf8_lossy(&exit).to_string())
-            .chain(code_blocks.iter().map(|block| {
+        let selections = code_blocks
+            .iter()
+            .map(|block| {
                 format!(
-                    "{}{}",
-                    String::from_utf8_lossy(&exec),
+                    "{}{}{}",
+                    String::from_utf8_lossy(Self::ANSI_PURPLE_START),
                     String::from_utf8_lossy(block).trim(),
+                    String::from_utf8_lossy(Self::ANSI_PURPLE_END),
                 )
-            }))
+            })
+            .chain(std::iter::once(String::from_utf8_lossy(&exit).to_string()))
             .collect::<Vec<String>>();
 
         match dialoguer::Select::new()
             .items(&selections)
-            .default(0)
+            .default(selections.len() - 1)
             .interact()
         {
             Ok(0) => None,
@@ -190,9 +210,7 @@ impl Query {
 
     pub fn handle_message_bytes(&mut self, index: usize, msg: Vec<u8>) -> Result<Vec<u8>, Error> {
         self.state.add_message(index, msg.clone());
-        let diff = index - self.state.line_no;
-        self.state.line_no = index;
-        Ok(std::iter::repeat(b'\n').take(diff).chain(msg).collect())
+        Ok(msg)
     }
 
     pub fn handle_content(&mut self, index: usize, content: Content) -> Result<Vec<u8>, Error> {
