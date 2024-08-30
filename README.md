@@ -16,27 +16,18 @@ E.g.
 
 ```bash
 $ rgpt-cli --mode bash "How can I list the files in this directory?"
-ls
-> exit
   exec ls
+> exit
 ```
 ```bash
 $ rgpt-cli --mode bash "Can you give me several commands to list files?"
-ls
-ls -l
-ls -la
-ls -R
-ls -lh
-ls -t
-ls -S
-> exit
-  exec ls
   exec ls -l
   exec ls -la
   exec ls -R
   exec ls -lh
   exec ls -t
   exec ls -S
+> exit
 ```
 
 ## TODO
