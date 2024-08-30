@@ -136,7 +136,7 @@ impl Query {
 
     fn select(&self, code_blocks: &[CodeBlock]) -> Option<CodeBlock> {
         // Jump back up self.state.line_no lines
-        for _ in 0..self.state.line_no + 1 {
+        for _ in 0..self.state.line_no  {
             let _ = std::io::stdout().write_all(b"\x1b[A");
         }
         std::io::stdout().flush().unwrap();
@@ -164,8 +164,8 @@ impl Query {
             .default(selections.len() - 1)
             .interact()
         {
-            Ok(0) => None,
-            Ok(selection) => Some(code_blocks[selection - 1].clone()),
+            Ok(selection) if selection == selections.len() - 1 => None,
+            Ok(selection) => Some(code_blocks[selection].clone()),
             Err(e) => {
                 tracing::error!("error: {}", e);
                 None
