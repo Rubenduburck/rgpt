@@ -3,6 +3,10 @@
 Overcomplicated POS but it does what it needs to do.
 Bit generic because I had plans of integrating multiple providers but I'll see when I have time for that.
 
+### Supports
+- [x] Anthropic
+- [ ] Everything else
+
 ### Usage
 ```bash
 $ rgpt-cli --mode <mode> <input>
