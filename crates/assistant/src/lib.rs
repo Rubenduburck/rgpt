@@ -1,10 +1,12 @@
 pub mod config;
 pub mod error;
+pub mod query;
 pub mod session;
 
 use std::sync::Arc;
 
-use config::Config;
+use config::{Config, Mode};
+use query::Query;
 use rgpt_provider::{api_key::ApiKey, Provider};
 use rgpt_types::{
     completion::{Request, RequestBuilder, TextEvent},
@@ -20,10 +22,22 @@ pub struct Assistant {
     provider: Arc<Provider>,
 }
 
+impl std::fmt::Debug for Assistant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Assistant")
+            .field("config", &self.config)
+            .finish()
+    }
+}
+
 impl Assistant {
     pub fn new(config: Config) -> Result<Self, Error> {
         let provider = Arc::new(ApiKey::get().ok_or(Error::NoApiKey)?.get_provider());
         Ok(Self { config, provider })
+    }
+
+    fn mode(&self) -> Mode {
+        self.config.mode
     }
 
     fn init_messages(&self) -> Vec<Message> {
@@ -81,7 +95,7 @@ impl Assistant {
         });
     }
 
-    fn handle_input(&self, messages: Vec<Message>, tx: tokio::sync::mpsc::Sender<TextEvent>) {
+    pub fn handle_input(&self, messages: Vec<Message>, tx: tokio::sync::mpsc::Sender<TextEvent>) {
         if self.config.stream {
             self.complete_stream(messages, tx);
         } else {
@@ -94,7 +108,12 @@ impl Assistant {
     }
 
     pub async fn query(self, messages: &[Message]) -> Result<(), Error> {
-        Session::setup(self)?.run_once(messages).await
+        let execute = self.mode() == Mode::Bash;
+        Query::builder(self)
+            .execute(execute)
+            .build()
+            .start(messages)
+            .await
     }
 }
 

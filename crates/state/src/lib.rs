@@ -1,11 +1,6 @@
 use std::io::{stdout, Write as _};
 
-use crossterm::{
-    cursor::MoveTo,
-    execute,
-    style::{Color, SetForegroundColor},
-    terminal::{Clear, ClearType},
-};
+use crossterm::{cursor, execute, style, terminal};
 use rgpt_types::{
     completion::{ContentBlock, ContentDelta, MessageStartData, TextEvent},
     message::Message,
@@ -21,6 +16,8 @@ pub struct StateInner {
     user_buffers: Vec<Vec<ContentBlock>>,
     assistant_buffers: Vec<Vec<ContentBlock>>,
     start_messages: Vec<MessageStartData>,
+
+    last_drawn_lines: u16,
 }
 
 impl StateInner {
@@ -29,6 +26,8 @@ impl StateInner {
             user_buffers: vec![vec![]],
             assistant_buffers: vec![],
             start_messages: vec![],
+
+            last_drawn_lines: 0,
         }
     }
 
@@ -40,11 +39,18 @@ impl StateInner {
     }
 
     // A function that draws the current state of the assistant
-    pub fn draw(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn draw(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let print = |s: &str, line: u16| {
+            println!("{}/{}| {}", line, self.last_drawn_lines, s);
+            stdout().flush().unwrap();
+        };
         // Clear the screen
-        execute!(stdout(), Clear(ClearType::All), MoveTo(0, 0))?;
 
-        let mut _current_line = 0;
+        if self.last_drawn_lines > 0 {
+            execute!(stdout(), cursor::MoveUp(self.last_drawn_lines))?;
+        }
+
+        let mut current_line = 0;
 
         // Determine the maximum number of buffers
         let max_buffers = self.user_buffers.len().max(self.assistant_buffers.len());
@@ -53,33 +59,38 @@ impl StateInner {
         for i in 0..max_buffers {
             // Draw user buffer if available
             if i < self.user_buffers.len() {
-                execute!(stdout(), SetForegroundColor(Color::Blue))?;
-                println!("User:");
-                _current_line += 1;
+                execute!(stdout(), style::SetForegroundColor(style::Color::Blue))?;
                 for block in &self.user_buffers[i] {
-                    println!("  {}", block.text().unwrap_or_default());
-                    _current_line += 1;
+                    print(&block.text().unwrap_or_default(), current_line);
+                    current_line += 1;
                 }
             }
 
             // Draw assistant buffer if available
             if i < self.assistant_buffers.len() {
-                execute!(stdout(), SetForegroundColor(Color::Green))?;
-                println!("Assistant:");
-                _current_line += 1;
+                execute!(stdout(), style::SetForegroundColor(style::Color::Green))?;
                 for block in &self.assistant_buffers[i] {
-                    println!("  {}", block.text().unwrap_or_default());
-                    _current_line += 1;
+                    print(&block.text().unwrap_or_default(), current_line);
+                    current_line += 1;
                 }
             }
         }
 
+        // Clear any remaining lines
+        for _ in current_line..self.last_drawn_lines {
+            execute!(stdout(), terminal::Clear(terminal::ClearType::CurrentLine))?;
+            execute!(stdout(), cursor::MoveToNextLine(1))?;
+        }
+
         // Reset color and flush stdout
-        execute!(stdout(), SetForegroundColor(Color::Reset))?;
+        execute!(stdout(), style::SetForegroundColor(style::Color::Reset))?;
         stdout().flush()?;
+
+        self.last_drawn_lines = current_line;
 
         Ok(())
     }
+
     pub async fn handle_requests(
         &mut self,
         rx: &mut tokio::sync::mpsc::Receiver<StateRequest>,

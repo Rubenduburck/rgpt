@@ -135,17 +135,17 @@ impl Default for MessagesRequest {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Content {
-    pub text: String,
-    #[serde(rename = "type")]
-    pub type_: String,
+#[serde(rename_all = "snake_case")]
+pub enum Content {
+    Text(String),
+    Other,
 }
 
 impl From<Content> for rgpt_types::completion::Content {
     fn from(content: Content) -> Self {
-        Self {
-            text: content.text,
-            type_: content.type_,
+        match content {
+            Content::Text(text) => Self::Text(text),
+            Content::Other => Self::Other,
         }
     }
 }

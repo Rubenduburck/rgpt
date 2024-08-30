@@ -1,6 +1,6 @@
 pub mod error;
 
-use std::process::exit;
+use std::{io::Write as _, process::exit};
 
 use clap::Parser;
 use error::Error;
@@ -19,7 +19,7 @@ struct Args {
 
 impl Args {
     async fn execute(&self) -> Result<(), Error> {
-        let cfg = Config::builder().mode(&self.mode).stream(true).build();
+        let cfg = Config::builder().mode(self.mode.as_str().into()).build();
         let messages = self
             .input
             .as_ref()
@@ -35,8 +35,19 @@ impl Args {
     }
 }
 
+fn ctrlc_handler() {
+    fn reset_terminal() {
+        print!("\x1b[?25h");
+        std::io::stdout().flush().unwrap();
+    }
+    reset_terminal();
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Error> {
+    ctrlc::set_handler(|| {
+        ctrlc_handler();
+    });
     rgpt_utils::logging::init_logger();
     Args::parse().execute().await?;
     // Exit program

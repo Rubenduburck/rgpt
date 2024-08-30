@@ -26,4 +26,7 @@ pub enum Error {
 
     #[error("State error")]
     State,
+
+    #[error("Dialoguer error")]
+    Dialoguer(#[from] dialoguer::Error),
 }

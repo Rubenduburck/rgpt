@@ -97,18 +97,34 @@ pub struct Usage {
     pub output_tokens: usize,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Content {
-    pub text: String,
-    #[serde(rename = "type")]
-    pub type_: String,
+#[derive(Debug, Deserialize, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Content {
+    Text(String),
+    Other,
+}
+
+impl Content {
+    pub fn text(&self) -> Option<String> {
+        match self {
+            Content::Text(text) => Some(text.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn bytes(&self) -> Vec<u8> {
+        match self {
+            Content::Text(text) => text.as_bytes().to_vec(),
+            _ => vec![],
+        }
+    }
 }
 
 impl From<Content> for Message {
     fn from(content: Content) -> Self {
-        Self {
-            role: "assistant".to_string(),
-            content: content.text,
+        match content {
+            Content::Text(text) => Message::from(text),
+            Content::Other => Message::from("".to_string()),
         }
     }
 }
@@ -257,6 +273,13 @@ impl ContentBlock {
             _ => None,
         }
     }
+
+    pub fn bytes(&self) -> Vec<u8> {
+        match self {
+            ContentBlock::Text { text } => text.as_bytes().to_vec(),
+            _ => vec![],
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone, Serialize)]
@@ -272,6 +295,13 @@ impl ContentDelta {
         match self {
             ContentDelta::TextDelta { text } => Some(text.clone()),
             _ => None,
+        }
+    }
+
+    pub fn bytes(&self) -> Vec<u8> {
+        match self {
+            ContentDelta::TextDelta { text } => text.as_bytes().to_vec(),
+            _ => vec![],
         }
     }
 }

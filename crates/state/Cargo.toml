@@ -7,12 +7,8 @@ edition = "2021"
 
 rgpt-types = { workspace = true }
 
-tokio = { version = "1.39.3", features = ["full"] }
+tokio = { workspace = true, features = ["full"] }
 
-tracing = "0.1.27"
-tracing-subscriber = "0.3.18"
-pin-project-lite = "0.2.14"
-tokio-stream = "0.1.6"
+tracing = { workspace = true}
 
-dialoguer = "0.11.0"
-crossterm = "0.28.1"
+crossterm = { workspace = true}

@@ -23,16 +23,6 @@ pub struct Session {
     _cancel_tx: UserKillTx,
 }
 
-#[macro_export]
-macro_rules! enclose {
-    ( ($( $x:ident ),*) $y:expr ) => {
-        {
-            $(let $x = $x.clone();)*
-            $y
-        }
-    };
-}
-
 impl Session {
     pub fn setup(assistant: Assistant) -> Result<Self, Error> {
         let (inner, input_tx, cancel_tx) = SessionInner::new(assistant);
@@ -40,7 +30,7 @@ impl Session {
         let mut kill_txs = Vec::new();
 
         let (kill_tx, kill_rx) = tokio::sync::mpsc::channel(1);
-        tokio::spawn(enclose! {(input_tx) async move {
+        tokio::spawn(rgpt_utils::enclose! {(input_tx) async move {
             if let Err(e) = Self::handle_user_input(input_tx, kill_rx).await {
                 tracing::error!("error: {}", e)
             }
@@ -124,20 +114,6 @@ impl Session {
         self.cleanup().await
     }
 
-    pub async fn run_once(&mut self, messages: &[Message]) -> Result<(), Error> {
-        for message in messages {
-            tracing::debug!("sending message: {}", message.content);
-            if let Err(e) = self.input_tx.send(message.content.clone()).await {
-                tracing::error!("error: {}", e);
-                return Err(Error::SendInput);
-            }
-        }
-        tracing::debug!("running once");
-        self.inner.run_once().await?;
-        tracing::debug!("cleaning up");
-        self.cleanup().await
-    }
-
     pub async fn cleanup(&mut self) -> Result<(), Error> {
         tracing::debug!("cleaning up");
         for kill_tx in self.kill_txs.drain(..) {
@@ -170,9 +146,6 @@ impl SessionInner {
     }
 
     async fn handle_input(&mut self, input: String) -> Result<(), Error> {
-        if input == "exit" {
-            return Err(Error::Exit);
-        }
         self.state
             .push_user_event(TextEvent::ContentBlockStart {
                 index: 0,
@@ -210,13 +183,6 @@ impl SessionInner {
                     }
                 }
             }
-        }
-        Ok(())
-    }
-
-    async fn run_once(&mut self) -> Result<(), Error> {
-        if let Some(input) = self.input_rx.recv().await {
-            self.handle_input(input).await?;
         }
         Ok(())
     }

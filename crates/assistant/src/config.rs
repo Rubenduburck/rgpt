@@ -1,20 +1,64 @@
 use rgpt_types::message::Message;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Config {
     pub messages: Option<Vec<Message>>,
     pub model: Option<String>,
     pub temperature: Option<f32>,
     pub stream: bool,
+    pub mode: Mode,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            messages: None,
+            model: None,
+            temperature: None,
+            stream: true,
+            mode: Mode::General,
+        }
+    }
+}
+
+
+#[derive(Debug, Copy, Clone, Default, Serialize, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum Mode {
+    Dev,
+    Bash,
+    #[default]
+    General,
+}
+
+impl From<&str> for Mode {
+    fn from(mode: &str) -> Self {
+        match mode {
+            "dev" => Mode::Dev,
+            "bash" => Mode::Bash,
+            _ => Mode::General,
+        }
+    }
+}
+
+impl Mode {
+    pub fn config(&self) -> Config {
+        match self {
+            Mode::Dev => dev_config(),
+            Mode::Bash => bash_config(),
+            Mode::General => general_config(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct Builder {
+    mode: Mode,
     messages: Vec<Message>,
     model: Option<String>,
     temperature: Option<f32>,
-    stream: bool,
+    stream: Option<bool>,
 }
 
 impl Builder {
@@ -22,8 +66,9 @@ impl Builder {
         Default::default()
     }
 
-    pub fn mode(mut self, mode: &str) -> Self {
-        self.messages = get_assistant(mode).messages.unwrap_or_default();
+    pub fn mode(mut self, mode: Mode) -> Self {
+        self.mode = mode;
+        self.messages = mode.config().messages.unwrap_or_default();
         self
     }
 
@@ -43,7 +88,7 @@ impl Builder {
     }
 
     pub fn stream(mut self, stream: bool) -> Self {
-        self.stream = stream;
+        self.stream = Some(stream);
         self
     }
 
@@ -52,7 +97,8 @@ impl Builder {
             messages: Some(self.messages),
             model: self.model,
             temperature: self.temperature,
-            stream: self.stream,
+            stream: self.stream.unwrap_or(true),
+            mode: self.mode,
         }
     }
 }
@@ -60,14 +106,6 @@ impl Builder {
 impl Config {
     pub fn builder() -> Builder {
         Builder::new()
-    }
-}
-
-fn get_assistant(mode: &str) -> Config {
-    match mode {
-        "dev" => dev_config(),
-        "bash" => bash_config(),
-        _ => general_config(),
     }
 }
 
@@ -107,6 +145,7 @@ fn bash_config() -> Config {
                 role: "system".to_string(),
                 content: format!("You output only valid and correct shell commands according to the user's prompt. \
                 You don't provide any explanations or any other text that is not valid shell commands. \
+                Wrap any code you send me in a code block.
                 User's `uname`: {}. User's `$SHELL`: {}.",
                 std::env::consts::OS,
                 std::env::var("SHELL").unwrap_or_else(|_| "Unknown".to_string())),

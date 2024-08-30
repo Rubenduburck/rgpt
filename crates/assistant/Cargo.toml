@@ -7,13 +7,12 @@ edition = "2021"
 rgpt-types = { workspace = true }
 rgpt-provider = { workspace = true }
 rgpt-state = { workspace = true }
+rgpt-utils = { workspace = true }
 
-lazy_static = "1.5.0"
-serde = { version = "1.0.209", features = ["derive"] }
-serde_json = "1.0.127"
-thiserror = "1.0.63"
-tokio = { version = "1.16.1", features = ["full"] }
-tokio-stream = "0.1.0"
-tracing = "0.1.40"
-tracing-test = { version = "0.2.5", features = ["no-env-filter"] }
-crossterm = "0.28.1"
+serde = { workspace = true, features = ["derive"] }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+tokio-stream = { workspace = true }
+tracing ={ workspace = true } 
+tracing-test = { workspace = true, features = ["no-env-filter"] }
+dialoguer ={ workspace = true } 
