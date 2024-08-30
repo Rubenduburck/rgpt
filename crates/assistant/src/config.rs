@@ -22,7 +22,6 @@ impl Default for Config {
     }
 }
 
-
 #[derive(Debug, Copy, Clone, Default, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum Mode {

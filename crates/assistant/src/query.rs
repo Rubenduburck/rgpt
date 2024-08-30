@@ -67,8 +67,6 @@ impl Query {
     const ANSI_BLUE_END: &'static [u8] = b"\x1b[0m";
     const ANSI_PURPLE_START: &'static [u8] = b"\x1b[95m";
     const ANSI_PURPLE_END: &'static [u8] = b"\x1b[0m";
-    const ANSI_GREEN_START: &'static [u8] = b"\x1b[92m";
-    const ANSI_GREEN_END: &'static [u8] = b"\x1b[0m";
 
     fn assistant_write(msg: Vec<u8>) -> Result<(), Error> {
         std::io::stdout().write_all(Self::ANSI_PURPLE_START)?;
@@ -140,7 +138,7 @@ impl Query {
 
     fn select(&self, code_blocks: &[CodeBlock]) -> Option<CodeBlock> {
         // Jump back up self.state.line_no lines
-        for _ in 0..self.state.line_no  {
+        for _ in 0..self.state.line_no {
             let _ = std::io::stdout().write_all(b"\x1b[A");
         }
         std::io::stdout().flush().unwrap();
@@ -170,10 +168,7 @@ impl Query {
         {
             Ok(selection) if selection == selections.len() - 1 => None,
             Ok(selection) => Some(code_blocks[selection].clone()),
-            Err(e) => {
-                tracing::error!("error: {}", e);
-                None
-            }
+            Err(_e) => None,
         }
     }
 
@@ -197,7 +192,7 @@ impl Query {
                     acc.extend(self.handle_content(i, content)?);
                     Ok(acc)
                 }),
-            TextEvent::MessageDelta { delta } => Ok(vec![]),
+            TextEvent::MessageDelta { .. } => Ok(vec![]),
             TextEvent::MessageStop => Ok(vec![]),
 
             TextEvent::ContentBlockStart {
@@ -207,7 +202,7 @@ impl Query {
             TextEvent::ContentBlockDelta { index, delta } => {
                 self.handle_content_block_delta(index, delta)
             }
-            TextEvent::ContentBlockStop { index } => Ok(vec![]),
+            TextEvent::ContentBlockStop { .. } => Ok(vec![]),
             _ => Ok(vec![]),
         }
     }

@@ -1,3 +1,3 @@
 pub mod logging;
-pub mod stream;
 pub mod macros;
+pub mod stream;

@@ -45,7 +45,7 @@ fn ctrlc_handler() {
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    ctrlc::set_handler(|| {
+    let _ = ctrlc::set_handler(|| {
         ctrlc_handler();
     });
     rgpt_utils::logging::init_logger();
