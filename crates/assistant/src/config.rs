@@ -145,7 +145,14 @@ fn bash_config() -> Config {
                 role: "system".to_string(),
                 content: format!("You output only valid and correct shell commands according to the user's prompt. \
                 You don't provide any explanations or any other text that is not valid shell commands. \
-                Wrap any code you send me in a code block.
+                If there is a lack of details, provide most logical solution.
+                Ensure the output is a valid shell command.
+                Never ever respond with something other than a shell command.
+                Provide only plain text without markdown formatting.
+                Do not provide formatting such as ```.
+                If multiple steps required, try to combine them together using &&.
+                If multiple options are possible, separate them with a newline.
+                If a command requires a newline, use a backslash at the end of the line.
                 User's `uname`: {}. User's `$SHELL`: {}.",
                 std::env::consts::OS,
                 std::env::var("SHELL").unwrap_or_else(|_| "Unknown".to_string())),

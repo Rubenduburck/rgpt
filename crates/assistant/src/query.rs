@@ -18,38 +18,7 @@ pub struct QueryState {
     messages: Vec<Vec<u8>>,
 }
 
-#[derive(Default, Debug, Clone)]
-struct CodeBlock {
-    code: Vec<u8>,
-    lang: Option<String>,
-}
-
-impl CodeBlock {
-    fn new(lang: Option<String>) -> Self {
-        Self { code: vec![], lang }
-    }
-    fn push(&mut self, msg: Vec<u8>) {
-        self.code.extend(msg.iter().copied());
-    }
-
-    fn bytes(&self) -> Vec<u8> {
-        self.code.clone()
-    }
-
-    fn text(&self) -> String {
-        String::from_utf8_lossy(&self.bytes()).to_string()
-    }
-
-    fn split(&self) -> Vec<CodeBlock> {
-        self.bytes()
-            .split(|&b| b == b'\n')
-            .map(|part| CodeBlock {
-                code: part.to_vec(),
-                lang: self.lang.clone(),
-            })
-            .collect()
-    }
-}
+type CodeBlock = Vec<u8>;
 
 impl QueryState {
     pub fn new() -> Self {
@@ -66,47 +35,29 @@ impl QueryState {
             .extend(msg.iter().copied());
     }
 
-    fn get_code_blocks(&self) -> Vec<CodeBlock> {
-        let mut code_blocks: Vec<CodeBlock> = vec![];
-        let mut inside_code_block = false;
-        let mut current_block: Option<CodeBlock> = None;
+    fn get_code_blocks(&self) -> Vec<Vec<u8>> {
+        let joined = self.messages.iter().flatten().copied().collect::<Vec<u8>>();
+        let mut blocks = Vec::new();
+        let mut current_block = Vec::new();
 
-        for msg in self.messages.iter() {
-            let parts: Vec<&[u8]> = msg.split(|&b| b == b'\n').collect();
+        for line in joined.split(|&b| b == b'\n') {
+            if !line.is_empty() {
+                current_block.extend_from_slice(line);
+                current_block.push(b'\n');
 
-            for part in parts {
-                match (inside_code_block, part.starts_with(b"```")) {
-                    (true, true) => {
-                        inside_code_block = false;
-                        if let Some(block) = current_block.take() {
-                            code_blocks.push(block);
-                        }
-                    }
-                    (true, false) => {
-                        if let Some(ref mut block) = current_block {
-                            block.code.extend_from_slice(part);
-                            block.code.push(b'\n');
-                        }
-                    }
-                    (false, true) => {
-                        let lang = String::from_utf8_lossy(&part[3..])
-                            .split_whitespace()
-                            .next()
-                            .map(|s| s.to_string());
-                        current_block = Some(CodeBlock::new(lang));
-                        inside_code_block = true;
-                    }
-                    (false, false) => {}
+                if !line.ends_with(b"/") {
+                    blocks.push(current_block);
+                    current_block = Vec::new();
                 }
             }
         }
 
-        // Handle case where the last code block isn't closed
-        if let Some(block) = current_block {
-            code_blocks.push(block);
+        // Add the last block if it's not empty
+        if !current_block.is_empty() {
+            blocks.push(current_block);
         }
 
-        code_blocks
+        blocks
     }
 }
 
@@ -115,6 +66,8 @@ impl Query {
     const ANSI_BLUE_END: &'static [u8] = b"\x1b[0m";
     const ANSI_PURPLE_START: &'static [u8] = b"\x1b[95m";
     const ANSI_PURPLE_END: &'static [u8] = b"\x1b[0m";
+    const ANSI_GREEN_START: &'static [u8] = b"\x1b[92m";
+    const ANSI_GREEN_END: &'static [u8] = b"\x1b[0m";
 
     fn assistant_write(msg: Vec<u8>) -> Result<(), Error> {
         std::io::stdout().write_all(Self::ANSI_PURPLE_START)?;
@@ -155,8 +108,7 @@ impl Query {
             std::io::stdout().write_all(b"\n")?;
             match Self::select(&self.state.get_code_blocks()) {
                 None => {}
-                Some(code_block) => {
-                    let code = code_block.bytes();
+                Some(code) => {
                     let mut cmd = Command::new("bash");
                     cmd.stdin(std::process::Stdio::piped());
                     let mut child = cmd.spawn()?;
@@ -171,26 +123,23 @@ impl Query {
     }
 
     fn select(code_blocks: &[CodeBlock]) -> Option<CodeBlock> {
-        const ALLOWED_LANGS: [&str; 3] = ["bash", "zsh", "sh"];
-        let code_blocks = code_blocks
-            .iter()
-            .filter(|block| {
-                ALLOWED_LANGS.contains(&block.lang.as_deref().unwrap_or("")) || block.lang.is_none()
-            })
-            .flat_map(|block| block.split())
-            .filter(|block| !block.text().is_empty())
-            .collect::<Vec<CodeBlock>>();
-
+        let exit = [Query::ANSI_BLUE_START, b"exit ", Query::ANSI_BLUE_END].concat();
+        let exec = [Query::ANSI_GREEN_START, b"exec ", Query::ANSI_GREEN_END].concat();
         if code_blocks.is_empty() {
             return None;
         }
 
-        let selections = std::iter::once(String::from("None"))
-            .chain(code_blocks.iter().map(|block| block.text()))
+        let selections = std::iter::once(String::from_utf8_lossy(&exit).to_string())
+            .chain(code_blocks.iter().map(|block| {
+                format!(
+                    "{}{}",
+                    String::from_utf8_lossy(&exec),
+                    String::from_utf8_lossy(block).trim(),
+                )
+            }))
             .collect::<Vec<String>>();
 
         match dialoguer::Select::new()
-            .with_prompt("Execute?")
             .items(&selections)
             .default(0)
             .interact()
@@ -304,23 +253,17 @@ mod tests {
 
     #[test]
     fn test_get_code_block() {
-        let state = QueryState {
-            messages: vec![
-                b"```rust".to_vec(),
-                b"fn main() {".to_vec(),
-                b"    println!(\"Hello, World!\");".to_vec(),
-                b"}".to_vec(),
-                b"```".to_vec(),
-                b"```bash".to_vec(),
-                b"ls".to_vec(),
-                b"```".to_vec(),
-                b"```bash\nls\n```".to_vec(),
-            ],
-            ..Default::default()
-        };
+        let mut state = QueryState::new();
+        state.add_message(0, b"echo 'Hello, World!'\n".to_vec());
+        state.add_message(1, b"echo 'Goodbye, World!'\n".to_vec());
+        state.add_message(2, b"echo 'Hello, World!'\n".to_vec());
+        state.add_message(3, b"echo 'Goodbye, World!'\n".to_vec());
+        state.add_message(
+            4,
+            b"echo 'Hello, World!'/\necho 'Goodbye, World!'\n".to_vec(),
+        );
 
-        let code_blocks = state.get_code_blocks();
-        println!("{:?}", code_blocks);
-        assert_eq!(code_blocks.len(), 3);
+        let blocks = state.get_code_blocks();
+        assert_eq!(blocks.len(), 5);
     }
 }
