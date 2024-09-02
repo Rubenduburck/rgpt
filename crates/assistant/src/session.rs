@@ -1,9 +1,7 @@
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-    ExecutableCommand as _,
 };
-use futures::poll;
 use futures::stream::StreamExt;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders};
@@ -13,7 +11,6 @@ use ratatui::{
     layout::{Constraint, Direction, Layout},
     Frame,
 };
-use std::task::Poll;
 use std::{io::stdout, rc::Rc};
 use tui_textarea::{Input, Key, TextArea};
 
@@ -28,14 +25,14 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn setup(assistant: Assistant, messages: &[Message]) -> Result<Self, Error> {
+    pub fn setup(assistant: Assistant) -> Result<Self, Error> {
         Ok(Session {
-            inner: SessionInner::new(assistant, messages),
+            inner: SessionInner::new(assistant),
         })
     }
 
-    pub async fn start(&mut self) -> Result<(), Error> {
-        self.inner.run().await?;
+    pub async fn start(&mut self, messages: &[Message]) -> Result<(), Error> {
+        self.inner.run(messages).await?;
         Ok(())
     }
 }
@@ -80,6 +77,7 @@ impl From<SessionAreaId> for String {
 
 pub struct SessionTextArea<'a> {
     pub id: SessionAreaId,
+    pub page: usize,
     pub text_area: TextArea<'a>,
 
     // FIXME: patch until tui-textarea implements wrapping.
@@ -87,23 +85,21 @@ pub struct SessionTextArea<'a> {
 }
 
 impl<'a> SessionTextArea<'a> {
-    fn new(id: SessionAreaId, lines: &[&str], max_line_length: usize) -> Self {
+    fn new(id: SessionAreaId, lines: &[&str], page: usize, max_line_length: usize) -> Self {
         let mut text_area = TextArea::from(lines.iter().map(|l| l.to_string()).collect::<Vec<_>>());
         text_area.set_cursor_line_style(Style::default());
-        text_area.set_cursor_style(Style::default());
-        text_area.set_block(
-            Block::default()
-                .borders(Borders::ALL)
-                .style(Style::default())
-                .title(String::from(id)),
-        );
         let mut session_text_area = SessionTextArea {
             id,
+            page,
             text_area,
             max_line_length,
         };
         session_text_area.inactivate();
         session_text_area
+    }
+
+    fn title(&self) -> String {
+        format!("{}: {}", String::from(self.id), self.page)
     }
 
     fn lines(&self) -> &[String] {
@@ -137,7 +133,7 @@ impl<'a> SessionTextArea<'a> {
             Block::default()
                 .borders(Borders::ALL)
                 .style(Style::default())
-                .title(String::from(self.id)),
+                .title(self.title()),
         );
     }
 
@@ -147,7 +143,7 @@ impl<'a> SessionTextArea<'a> {
             Block::default()
                 .borders(Borders::ALL)
                 .style(Style::default().fg(Color::DarkGray))
-                .title(String::from(self.id)),
+                .title(self.title()),
         );
     }
 }
@@ -180,6 +176,7 @@ impl<'a> SessionLayout<'a> {
         tracing::trace!("assistant_areas: {:?}", self.assistant_areas.len());
     }
     fn new(messages: &[Message]) -> Self {
+        tracing::trace!("messages: {:?}", messages);
         // FIXME: patch until tui-textarea implements wrapping.
         let max_line_length = crossterm::terminal::size()
             .map(|(w, _)| (w.saturating_sub(10)) as usize / 2)
@@ -189,39 +186,41 @@ impl<'a> SessionLayout<'a> {
         let mut user_areas = messages
             .iter()
             .filter(|m| m.role == Role::User)
-            .map(|m| {
+            .enumerate()
+            .map(|(page, m)| {
                 SessionTextArea::new(
                     SessionAreaId::User,
                     m.content.lines().collect::<Vec<_>>().as_slice(),
+                    page,
                     max_line_length,
                 )
             })
             .collect::<Vec<_>>();
-        if user_areas.is_empty() {
-            user_areas.push(SessionTextArea::new(
-                SessionAreaId::User,
-                &[],
-                max_line_length,
-            ));
-        }
+        user_areas.push(SessionTextArea::new(
+            SessionAreaId::User,
+            &[],
+            user_areas.len(),
+            max_line_length,
+        ));
         let mut assistant_areas = messages
             .iter()
             .filter(|m| m.role == Role::Assistant)
-            .map(|m| {
+            .enumerate()
+            .map(|(page, m)| {
                 SessionTextArea::new(
                     SessionAreaId::Assistant,
                     m.content.lines().collect::<Vec<_>>().as_slice(),
+                    page,
                     max_line_length,
                 )
             })
             .collect::<Vec<_>>();
-        if assistant_areas.is_empty() {
-            assistant_areas.push(SessionTextArea::new(
-                SessionAreaId::Assistant,
-                &[],
-                max_line_length,
-            ));
-        }
+        assistant_areas.push(SessionTextArea::new(
+            SessionAreaId::Assistant,
+            &[],
+            assistant_areas.len(),
+            max_line_length,
+        ));
         let system_message_lines = messages
             .iter()
             .find(|m| m.role == Role::System)
@@ -229,13 +228,15 @@ impl<'a> SessionLayout<'a> {
         let system_area = SessionTextArea::new(
             SessionAreaId::System,
             system_message_lines.as_deref().unwrap_or_default(),
+            0,
             max_line_length,
         );
+        let page = user_areas.len() - 1;
         let mut layout = SessionLayout {
             system_area,
             user_areas,
             assistant_areas,
-            page: 0,
+            page,
             active: SessionAreaId::User,
             max_line_length,
         };
@@ -319,7 +320,7 @@ impl<'a> SessionLayout<'a> {
     }
 
     fn draw(&self, f: &mut Frame) {
-        let (outer_layout, inner_layout) = self.chunks(f.area());
+        let (outer_layout, user_layout) = self.chunks(f.area());
         let user_area = self.area(SessionAreaId::User).unwrap();
         let assistant_area = match self.area(SessionAreaId::Assistant) {
             Some(assistant_area) if assistant_area.is_empty() => self
@@ -331,9 +332,9 @@ impl<'a> SessionLayout<'a> {
             }
         };
         let system_area = self.area(SessionAreaId::System).unwrap();
-        f.render_widget(user_area.text_area(), inner_layout[1]);
+        f.render_widget(user_area.text_area(), user_layout[1]);
         f.render_widget(assistant_area.text_area(), outer_layout[1]);
-        f.render_widget(system_area.text_area(), inner_layout[0]);
+        f.render_widget(system_area.text_area(), user_layout[0]);
     }
 
     fn messages(&self) -> Vec<Message> {
@@ -353,6 +354,7 @@ impl<'a> SessionLayout<'a> {
 
     fn previous_page(&mut self) {
         self.page = (self.page + self.user_areas.len() - 1) % self.user_areas.len();
+        self.activate(self.active);
     }
 
     fn inactivate_all(&mut self) {
@@ -386,11 +388,13 @@ impl<'a> SessionLayout<'a> {
         self.user_areas.push(SessionTextArea::new(
             SessionAreaId::User,
             &[],
+            self.page + 1,
             self.max_line_length,
         ));
         self.assistant_areas.push(SessionTextArea::new(
             SessionAreaId::Assistant,
             &[],
+            self.page + 1,
             self.max_line_length,
         ));
         self.next_page();
@@ -467,12 +471,13 @@ pub struct SessionInner {
 }
 
 impl SessionInner {
-    fn new(assistant: Assistant, messages: &[Message]) -> Self {
-        let layout = SessionLayout::new(messages);
+    fn new(assistant: Assistant) -> Self {
+        let messages = assistant.init_messages();
+        let layout = SessionLayout::new(&messages);
         SessionInner { assistant, layout }
     }
 
-    async fn run(&mut self) -> Result<(), Error> {
+    async fn run(&mut self, messages: &[Message]) -> Result<(), Error> {
         enable_raw_mode()?;
         crossterm::execute!(stdout(), EnterAlternateScreen, EnableMouseCapture)?;
         let mut term = Terminal::new(CrosstermBackend::new(stdout()))?;

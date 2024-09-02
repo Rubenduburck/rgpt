@@ -63,7 +63,7 @@ impl Assistant {
                 Ok(response) => {
                     tracing::trace!("response: {:?}", response);
                     response
-                },
+                }
                 Err(e) => {
                     tracing::error!("error: {}", e);
                     return;
@@ -110,7 +110,7 @@ impl Assistant {
     }
 
     pub async fn session(self, messages: &[Message]) -> Result<(), Error> {
-        Session::setup(self, messages)?.start().await
+        Session::setup(self)?.start(messages).await
     }
 
     pub async fn query(self, messages: &[Message]) -> Result<(), Error> {
