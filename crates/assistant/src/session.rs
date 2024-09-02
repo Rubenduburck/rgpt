@@ -184,7 +184,7 @@ impl<'a> SessionLayout<'a> {
         let max_line_length = crossterm::terminal::size()
             .map(|(w, _)| (w.saturating_sub(10)) as usize / 2)
             .unwrap_or(70);
-        tracing::trace!("max_line_length: {}", max_line_length)
+        tracing::trace!("max_line_length: {}", max_line_length);
         let active = SessionAreaId::User;
         let mut user_areas = messages
             .iter()
