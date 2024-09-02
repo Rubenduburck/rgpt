@@ -102,6 +102,12 @@ impl<'a> SessionTextArea<'a> {
         format!("{}: {}", String::from(self.id), self.page)
     }
 
+    fn clear(&mut self) {
+        self.text_area = TextArea::default();
+        self.text_area.set_cursor_line_style(Style::default());
+        self.inactivate();
+    }
+
     fn lines(&self) -> &[String] {
         self.text_area.lines()
     }
@@ -112,14 +118,19 @@ impl<'a> SessionTextArea<'a> {
     }
 
     fn input(&mut self, input: Input) {
-        let current_line_length = self.lines().last().map_or(0, |l| l.len());
-        if current_line_length + 1 >= self.max_line_length && input.key != Key::Enter {
-            self.text_area.input(Input {
-                key: Key::Enter,
-                ..Default::default()
-            });
-        }
-        self.text_area.input(input);
+        match input.key {
+            Key::Char(_) => {
+                let current_line_length = self.lines().last().map_or(0, |l| l.len());
+                if current_line_length + 1 >= self.max_line_length {
+                    self.text_area.input(Input {
+                        key: Key::Enter,
+                        ..input
+                    });
+                }
+                self.text_area.input(input)
+            }
+            _ => self.text_area.input(input),
+        };
     }
 
     fn text_area(&self) -> &TextArea<'a> {
@@ -443,7 +454,10 @@ impl<'a> SessionLayout<'a> {
         let area = &mut self.assistant_areas[self.page];
         match event {
             TextEvent::Null => {}
-            TextEvent::MessageStart { .. } => {}
+            TextEvent::MessageStart { .. } => {
+                // clear the assistant buffer
+                area.clear();
+            }
             TextEvent::ContentBlockStart { content_block, .. } => {
                 for input in string_to_inputs(content_block.text().unwrap_or_default().as_str()) {
                     area.input(input);
@@ -534,6 +548,10 @@ impl SessionInner {
                             }
                         }
                     };
+                    // Don't redraw if there are more events to process
+                    if let Ok(true) = crossterm::event::poll(std::time::Duration::from_millis(0)) {
+                        continue;
+                    }
                     term.draw(|f| {
                         self.layout.draw(f);
                     })?;
