@@ -55,11 +55,15 @@ impl Assistant {
     }
 
     fn complete(&self, messages: Vec<Message>, tx: tokio::sync::mpsc::Sender<TextEvent>) {
+        tracing::trace!("not streaming");
         let request = self.build_request(messages);
         let provider = self.provider.clone();
         tokio::spawn(async move {
             let response = match provider.complete(request).await {
-                Ok(response) => response,
+                Ok(response) => {
+                    tracing::trace!("response: {:?}", response);
+                    response
+                },
                 Err(e) => {
                     tracing::error!("error: {}", e);
                     return;
@@ -74,6 +78,7 @@ impl Assistant {
     }
 
     fn complete_stream(&self, messages: Vec<Message>, tx: tokio::sync::mpsc::Sender<TextEvent>) {
+        tracing::trace!("streaming");
         let request = self.build_request(messages);
         let provider = self.provider.clone();
         tokio::spawn(async move {
@@ -81,6 +86,7 @@ impl Assistant {
             while let Some(event) = stream.next().await {
                 match event {
                     Ok(event) => {
+                        tracing::trace!("event: {:?}", event);
                         if (tx.send(event).await).is_err() {
                             tracing::error!("error: send output");
                         }
@@ -104,7 +110,7 @@ impl Assistant {
     }
 
     pub async fn session(self, messages: &[Message]) -> Result<(), Error> {
-        Session::setup(self)?.start(messages).await
+        Session::setup(self, messages)?.start().await
     }
 
     pub async fn query(self, messages: &[Message]) -> Result<(), Error> {
@@ -119,21 +125,23 @@ impl Assistant {
 
 #[cfg(test)]
 mod tests {
+    use rgpt_types::message::Role;
+
     use super::*;
 
     fn get_config() -> Config {
         Config {
             messages: Some(vec![
                 Message {
-                    role: "system".to_string(),
+                    role: Role::System,
                     content: "You are my testing assistant. Whatever you say, start with 'Testing: '".to_string(),
                 },
                 Message {
-                    role: "user".to_string(),
+                    role: Role::User,
                     content: "Your responses must be short and concise. Do not include explanations unless asked.".to_string(),
                 },
                 Message {
-                    role: "assistant".to_string(),
+                    role: Role::Assistant,
                     content: "Understood.".to_string(),
                 },
             ]),
@@ -147,7 +155,7 @@ mod tests {
         let cfg = get_config();
         let assistant = Assistant::new(cfg).unwrap();
         let test_messages = vec![Message {
-            role: "user".to_string(),
+            role: Role::User,
             content: "Testing: Hello, world!".to_string(),
         }];
         let (tx, mut rx) = tokio::sync::mpsc::channel(100);

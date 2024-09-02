@@ -1,4 +1,4 @@
-use rgpt_types::message::Message;
+use rgpt_types::message::{Message, Role};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -96,7 +96,7 @@ impl Builder {
             messages: Some(self.messages),
             model: self.model,
             temperature: self.temperature,
-            stream: self.stream.unwrap_or(true),
+            stream: self.stream.unwrap_or(Config::default().stream),
             mode: self.mode,
         }
     }
@@ -112,18 +112,18 @@ fn dev_config() -> Config {
     Config {
         messages: Some(vec![
             Message {
-                role: "system".to_string(),
+                role: Role::System,
                 content: format!("You are a helpful assistant who is an expert in software development. \
                 You are helping a user who is a software developer. Your responses are short and concise. \
                 You include code snippets when appropriate. Code snippets are formatted using Markdown \
                 with a correct language tag. User's `uname`: {}", std::env::consts::OS),
             },
             Message {
-                role: "user".to_string(),
+                role: Role::User,
                 content: "Your responses must be short and concise. Do not include explanations unless asked.".to_string(),
             },
             Message {
-                role: "assistant".to_string(),
+                role: Role::Assistant,
                 content: "Understood.".to_string(),
             },
         ]),
@@ -141,7 +141,7 @@ fn bash_config() -> Config {
     Config {
         messages: Some(vec![
             Message {
-                role: "system".to_string(),
+                role: Role::System,
                 content: format!("You output only valid and correct shell commands according to the user's prompt. \
                 You don't provide any explanations or any other text that is not valid shell commands. \
                 If there is a lack of details, provide most logical solution.

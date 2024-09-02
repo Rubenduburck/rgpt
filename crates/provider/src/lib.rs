@@ -30,6 +30,7 @@ impl Provider {
         let stream = match self {
             Self::Anthropic(provider) => provider.messages_stream(request).await,
         }?;
+        tracing::trace!("adapting stream");
         Ok(adapt_stream(stream, |res| {
             res.map(Into::into).map_err(Into::into)
         }))

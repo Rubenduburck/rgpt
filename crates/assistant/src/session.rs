@@ -1,253 +1,576 @@
-use rgpt_state::State;
-use rgpt_types::{
-    completion::{ContentBlock, TextEvent},
-    message::Message,
+use crossterm::{
+    event::{DisableMouseCapture, EnableMouseCapture},
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    ExecutableCommand as _,
 };
-use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _};
+use futures::poll;
+use futures::stream::StreamExt;
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::widgets::{Block, Borders};
+use ratatui::Terminal;
+use ratatui::{backend::CrosstermBackend, layout::Rect};
+use ratatui::{
+    layout::{Constraint, Direction, Layout},
+    Frame,
+};
+use std::task::Poll;
+use std::{io::stdout, rc::Rc};
+use tui_textarea::{Input, Key, TextArea};
 
 use crate::{error::Error, Assistant};
-
-pub type UserInputTx = tokio::sync::mpsc::Sender<String>;
-pub type UserInputRx = tokio::sync::mpsc::Receiver<String>;
-pub type SystemOutputRx = tokio::sync::mpsc::Receiver<String>;
-pub type SystemOutputTx = tokio::sync::mpsc::Sender<String>;
-pub type UserKillTx = tokio::sync::mpsc::Sender<()>;
-pub type UserKillRx = tokio::sync::mpsc::Receiver<()>;
-
-pub type TaskHandle = tokio::task::JoinHandle<()>;
+use rgpt_types::{
+    completion::TextEvent,
+    message::{Message, Role},
+};
 
 pub struct Session {
     inner: SessionInner,
-    kill_txs: Vec<UserKillTx>,
-    input_tx: UserInputTx,
-    _cancel_tx: UserKillTx,
 }
 
 impl Session {
-    pub fn setup(assistant: Assistant) -> Result<Self, Error> {
-        let (inner, input_tx, cancel_tx) = SessionInner::new(assistant);
-
-        let mut kill_txs = Vec::new();
-
-        let (kill_tx, kill_rx) = tokio::sync::mpsc::channel(1);
-        tokio::spawn(rgpt_utils::enclose! {(input_tx) async move {
-            if let Err(e) = Self::handle_user_input(input_tx, kill_rx).await {
-                tracing::error!("error: {}", e)
-            }
-        }});
-        kill_txs.push(kill_tx);
-
+    pub fn setup(assistant: Assistant, messages: &[Message]) -> Result<Self, Error> {
         Ok(Session {
-            inner,
-            kill_txs,
-            input_tx,
-            _cancel_tx: cancel_tx,
+            inner: SessionInner::new(assistant, messages),
         })
     }
 
-    #[tracing::instrument(skip(input_tx, kill_rx))]
-    pub async fn handle_user_input(
-        input_tx: UserInputTx,
-        mut kill_rx: UserKillRx,
-    ) -> Result<(), Error> {
-        let mut reader = tokio::io::BufReader::new(tokio::io::stdin());
-        let mut line = String::new();
-        loop {
-            line.clear();
-            tokio::select! {
-                _ = kill_rx.recv() => {
-                    tracing::debug!("killed");
-                    return Ok(());
-                }
-                new_line = reader.read_line(&mut line) => {
-                    match new_line {
-                        Ok(0) => return Ok(()),
-                        Ok(_) => {
-                            let line = line.trim().to_string();
-                            if line.is_empty() {
-                                continue;
-                            }
-                            input_tx.send(line).await.unwrap();
-                        }
-                        Err(e) => {
-                            tracing::error!("error: {}", e);
-                            return Err(Error::Io(e));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    #[tracing::instrument(skip(output_rx, kill_rx))]
-    pub async fn handle_output(
-        mut output_rx: SystemOutputRx,
-        mut kill_rx: UserKillRx,
-    ) -> Result<(), Error> {
-        let mut stdout = tokio::io::stdout();
-        loop {
-            tokio::select! {
-                _ = kill_rx.recv() => {
-                    tracing::debug!("killed");
-                    return Ok(());
-                }
-                output = output_rx.recv() => {
-                    if let Some(output) = output {
-                        stdout.write_all(output.as_bytes()).await?;
-                        stdout.flush().await?;
-                    } else {
-                        return Ok(());
-                    }
-                }
-            }
-        }
-    }
-
-    pub async fn start(&mut self, messages: &[Message]) -> Result<(), Error> {
-        for message in messages {
-            if let Err(e) = self.input_tx.send(message.content.clone()).await {
-                tracing::error!("error: {}", e);
-                return Err(Error::SendInput);
-            }
-        }
+    pub async fn start(&mut self) -> Result<(), Error> {
         self.inner.run().await?;
-        self.cleanup().await
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionAreaId {
+    User,
+    Assistant,
+    System,
+}
+
+impl From<SessionAreaId> for rgpt_types::message::Role {
+    fn from(id: SessionAreaId) -> Self {
+        match id {
+            SessionAreaId::User => Role::User,
+            SessionAreaId::Assistant => Role::Assistant,
+            SessionAreaId::System => Role::System,
+        }
+    }
+}
+
+impl From<&str> for SessionAreaId {
+    fn from(id: &str) -> Self {
+        match id {
+            "user" => SessionAreaId::User,
+            "assistant" => SessionAreaId::Assistant,
+            "system" => SessionAreaId::System,
+            _ => SessionAreaId::User,
+        }
+    }
+}
+
+impl From<SessionAreaId> for String {
+    fn from(id: SessionAreaId) -> Self {
+        match id {
+            SessionAreaId::User => "user".to_string(),
+            SessionAreaId::Assistant => "assistant".to_string(),
+            SessionAreaId::System => "system".to_string(),
+        }
+    }
+}
+
+pub struct SessionTextArea<'a> {
+    pub id: SessionAreaId,
+    pub text_area: TextArea<'a>,
+
+    // FIXME: patch until tui-textarea implements wrapping.
+    pub max_line_length: usize,
+}
+
+impl<'a> SessionTextArea<'a> {
+    fn new(id: SessionAreaId, lines: &[&str], max_line_length: usize) -> Self {
+        let mut text_area = TextArea::from(lines.iter().map(|l| l.to_string()).collect::<Vec<_>>());
+        text_area.set_cursor_line_style(Style::default());
+        text_area.set_cursor_style(Style::default());
+        text_area.set_block(
+            Block::default()
+                .borders(Borders::ALL)
+                .style(Style::default())
+                .title(String::from(id)),
+        );
+        let mut session_text_area = SessionTextArea {
+            id,
+            text_area,
+            max_line_length,
+        };
+        session_text_area.inactivate();
+        session_text_area
     }
 
-    pub async fn cleanup(&mut self) -> Result<(), Error> {
-        tracing::debug!("cleaning up");
-        for kill_tx in self.kill_txs.drain(..) {
-            let _ = kill_tx.send(()).await;
+    fn lines(&self) -> &[String] {
+        self.text_area.lines()
+    }
+
+    fn is_empty(&self) -> bool {
+        let lines = self.text_area.lines();
+        lines.is_empty() || lines.len() == 1 && lines[0].is_empty()
+    }
+
+    fn input(&mut self, input: Input) {
+        let current_line_length = self.lines().last().map_or(0, |l| l.len());
+        if current_line_length + 1 >= self.max_line_length && input.key != Key::Enter {
+            self.text_area.input(Input {
+                key: Key::Enter,
+                ..Default::default()
+            });
         }
-        Ok(())
+        self.text_area.input(input);
+    }
+
+    fn text_area(&self) -> &TextArea<'a> {
+        &self.text_area
+    }
+
+    fn activate(&mut self) {
+        self.text_area
+            .set_cursor_style(Style::default().add_modifier(Modifier::REVERSED));
+        self.text_area.set_block(
+            Block::default()
+                .borders(Borders::ALL)
+                .style(Style::default())
+                .title(String::from(self.id)),
+        );
+    }
+
+    fn inactivate(&mut self) {
+        self.text_area.set_cursor_style(Style::default());
+        self.text_area.set_block(
+            Block::default()
+                .borders(Borders::ALL)
+                .style(Style::default().fg(Color::DarkGray))
+                .title(String::from(self.id)),
+        );
+    }
+}
+
+impl<'a> From<&'a SessionTextArea<'a>> for Message {
+    fn from(text_area: &'a SessionTextArea<'a>) -> Self {
+        Message {
+            role: text_area.id.into(),
+            content: text_area.lines().join("\n"),
+        }
+    }
+}
+
+pub struct SessionLayout<'a> {
+    pub system_area: SessionTextArea<'a>,
+    pub user_areas: Vec<SessionTextArea<'a>>,
+    pub assistant_areas: Vec<SessionTextArea<'a>>,
+    pub page: usize,
+    pub active: SessionAreaId,
+
+    // FIXME: patch until tui-textarea implements wrapping.
+    pub max_line_length: usize,
+}
+
+impl<'a> SessionLayout<'a> {
+    fn debug_print(&self) {
+        tracing::trace!("page: {}", self.page);
+        tracing::trace!("active: {:?}", self.active);
+        tracing::trace!("user_areas: {:?}", self.user_areas.len());
+        tracing::trace!("assistant_areas: {:?}", self.assistant_areas.len());
+    }
+    fn new(messages: &[Message]) -> Self {
+        // FIXME: patch until tui-textarea implements wrapping.
+        let max_line_length = crossterm::terminal::size()
+            .map(|(w, _)| (w.saturating_sub(10)) as usize / 2)
+            .unwrap_or(70);
+        tracing::trace!("max_line_length: {}", max_line_length)
+        let active = SessionAreaId::User;
+        let mut user_areas = messages
+            .iter()
+            .filter(|m| m.role == Role::User)
+            .map(|m| {
+                SessionTextArea::new(
+                    SessionAreaId::User,
+                    m.content.lines().collect::<Vec<_>>().as_slice(),
+                    max_line_length,
+                )
+            })
+            .collect::<Vec<_>>();
+        if user_areas.is_empty() {
+            user_areas.push(SessionTextArea::new(
+                SessionAreaId::User,
+                &[],
+                max_line_length,
+            ));
+        }
+        let mut assistant_areas = messages
+            .iter()
+            .filter(|m| m.role == Role::Assistant)
+            .map(|m| {
+                SessionTextArea::new(
+                    SessionAreaId::Assistant,
+                    m.content.lines().collect::<Vec<_>>().as_slice(),
+                    max_line_length,
+                )
+            })
+            .collect::<Vec<_>>();
+        if assistant_areas.is_empty() {
+            assistant_areas.push(SessionTextArea::new(
+                SessionAreaId::Assistant,
+                &[],
+                max_line_length,
+            ));
+        }
+        let system_message_lines = messages
+            .iter()
+            .find(|m| m.role == Role::System)
+            .map(|m| m.content.lines().collect::<Vec<_>>().as_slice().to_vec());
+        let system_area = SessionTextArea::new(
+            SessionAreaId::System,
+            system_message_lines.as_deref().unwrap_or_default(),
+            max_line_length,
+        );
+        let mut layout = SessionLayout {
+            system_area,
+            user_areas,
+            assistant_areas,
+            page: 0,
+            active: SessionAreaId::User,
+            max_line_length,
+        };
+        layout.area_mut(active).unwrap().activate();
+        layout
+    }
+    fn chunks(&self, chunk: Rect) -> (Rc<[Rect]>, Rc<[Rect]>) {
+        let outer_layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+            .split(chunk);
+
+        let inner_layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(25), Constraint::Percentage(75)].as_ref())
+            .split(outer_layout[0]);
+        (outer_layout, inner_layout)
+    }
+
+    fn area_mut(&mut self, id: SessionAreaId) -> Option<&mut SessionTextArea<'a>> {
+        self.page_area_mut(self.page, id)
+    }
+
+    fn area(&self, id: SessionAreaId) -> Option<&SessionTextArea<'a>> {
+        self.page_area(self.page, id)
+    }
+
+    fn page_area(&self, page: usize, id: SessionAreaId) -> Option<&SessionTextArea<'a>> {
+        match id {
+            SessionAreaId::User => self.user_areas.get(page),
+            SessionAreaId::Assistant => self.assistant_areas.get(page),
+            SessionAreaId::System => Some(&self.system_area),
+        }
+    }
+
+    fn page_area_mut(
+        &mut self,
+        page: usize,
+        id: SessionAreaId,
+    ) -> Option<&mut SessionTextArea<'a>> {
+        match id {
+            SessionAreaId::User => self.user_areas.get_mut(page),
+            SessionAreaId::Assistant => self.assistant_areas.get_mut(page),
+            SessionAreaId::System => Some(&mut self.system_area),
+        }
+    }
+
+    fn active_area(&self) -> &SessionTextArea<'a> {
+        self.area(self.active).unwrap()
+    }
+
+    fn active_area_mut(&mut self) -> &mut SessionTextArea<'a> {
+        self.area_mut(self.active).unwrap()
+    }
+
+    fn switch(&mut self) {
+        self.active = match self.active {
+            SessionAreaId::User => SessionAreaId::Assistant,
+            SessionAreaId::Assistant => SessionAreaId::System,
+            SessionAreaId::System => SessionAreaId::User,
+        };
+        for id in [
+            SessionAreaId::User,
+            SessionAreaId::Assistant,
+            SessionAreaId::System,
+        ]
+        .iter()
+        {
+            if *id == self.active {
+                if let Some(a) = self.area_mut(*id) {
+                    a.activate()
+                }
+            } else if let Some(a) = self.area_mut(*id) {
+                a.inactivate()
+            }
+        }
+    }
+
+    fn input(&mut self, input: Input) {
+        self.active_area_mut().input(input);
+    }
+
+    fn draw(&self, f: &mut Frame) {
+        let (outer_layout, inner_layout) = self.chunks(f.area());
+        let user_area = self.area(SessionAreaId::User).unwrap();
+        let assistant_area = match self.area(SessionAreaId::Assistant) {
+            Some(assistant_area) if assistant_area.is_empty() => self
+                .page_area(self.page.saturating_sub(1), SessionAreaId::Assistant)
+                .unwrap(),
+            Some(assistant_area) => assistant_area,
+            None => {
+                panic!("assistant area is empty");
+            }
+        };
+        let system_area = self.area(SessionAreaId::System).unwrap();
+        f.render_widget(user_area.text_area(), inner_layout[1]);
+        f.render_widget(assistant_area.text_area(), outer_layout[1]);
+        f.render_widget(system_area.text_area(), inner_layout[0]);
+    }
+
+    fn messages(&self) -> Vec<Message> {
+        let mut messages = vec![Message::from(self.area(SessionAreaId::System).unwrap())];
+        for i in 0..self.page {
+            messages.push(Message::from(&self.user_areas[i]));
+            messages.push(Message::from(&self.assistant_areas[i]));
+        }
+        messages.push(Message::from(&self.user_areas[self.page]));
+        messages
+    }
+
+    fn next_page(&mut self) {
+        self.page = (self.page + 1) % self.user_areas.len();
+        self.activate(self.active);
+    }
+
+    fn previous_page(&mut self) {
+        self.page = (self.page + self.user_areas.len() - 1) % self.user_areas.len();
+    }
+
+    fn inactivate_all(&mut self) {
+        for id in [
+            SessionAreaId::User,
+            SessionAreaId::Assistant,
+            SessionAreaId::System,
+        ]
+        .iter()
+        {
+            if let Some(a) = self.area_mut(*id) {
+                a.inactivate()
+            }
+        }
+    }
+
+    fn activate(&mut self, id: SessionAreaId) {
+        self.inactivate_all();
+        if let Some(a) = self.area_mut(id) {
+            a.activate()
+        }
+    }
+
+    fn new_page(&mut self) {
+        self.inactivate_all();
+        if self.user_areas.last().unwrap().lines().is_empty()
+            && self.assistant_areas.last().unwrap().lines().is_empty()
+        {
+            return;
+        }
+        self.user_areas.push(SessionTextArea::new(
+            SessionAreaId::User,
+            &[],
+            self.max_line_length,
+        ));
+        self.assistant_areas.push(SessionTextArea::new(
+            SessionAreaId::Assistant,
+            &[],
+            self.max_line_length,
+        ));
+        self.next_page();
+    }
+
+    fn update(&mut self, page: usize, messages: &[Message]) {
+        for message in messages {
+            match message.role {
+                Role::User => {
+                    self.user_areas[page].text_area = TextArea::from(message.content.lines());
+                }
+                Role::Assistant => {
+                    self.assistant_areas[page].text_area = TextArea::from(message.content.lines());
+                }
+                Role::System => {
+                    self.system_area.text_area = TextArea::from(message.content.lines());
+                }
+            }
+        }
+    }
+
+    async fn handle_assistant_event(&mut self, event: TextEvent) {
+        tracing::trace!("handling assistant stream");
+        fn char_to_input(c: char) -> Input {
+            fn enter() -> Input {
+                Input {
+                    key: Key::Enter,
+                    ..Default::default()
+                }
+            }
+            fn default(c: char, uppercase: bool) -> Input {
+                Input {
+                    key: Key::Char(c),
+                    shift: uppercase,
+                    ..Default::default()
+                }
+            }
+            match c {
+                '\n' => enter(),
+                c => default(c, false),
+            }
+        }
+        fn string_to_inputs(s: &str) -> Vec<Input> {
+            s.chars().map(char_to_input).collect()
+        }
+        let area = &mut self.assistant_areas[self.page];
+        match event {
+            TextEvent::Null => {}
+            TextEvent::MessageStart { .. } => {}
+            TextEvent::ContentBlockStart { content_block, .. } => {
+                for input in string_to_inputs(content_block.text().unwrap_or_default().as_str()) {
+                    area.input(input);
+                }
+            }
+            TextEvent::ContentBlockDelta { delta, .. } => {
+                for input in string_to_inputs(delta.text().unwrap_or_default().as_str()) {
+                    area.input(input);
+                }
+            }
+            TextEvent::ContentBlockStop { .. } => {}
+            TextEvent::MessageDelta { .. } => {}
+            TextEvent::MessageStop => {
+                tracing::trace!("message stop");
+                self.new_page();
+            }
+        }
+        tracing::trace!("finished")
     }
 }
 
 pub struct SessionInner {
-    input_rx: UserInputRx,
-    cancel_rx: UserKillRx,
     assistant: Assistant,
-    state: State,
+    layout: SessionLayout<'static>,
 }
 
 impl SessionInner {
-    fn new(assistant: Assistant) -> (Self, UserInputTx, UserKillTx) {
-        let (input_tx, input_rx) = tokio::sync::mpsc::channel(100);
-        let (cancel_tx, cancel_rx) = tokio::sync::mpsc::channel(1);
-
-        let session = SessionInner {
-            input_rx,
-            cancel_rx,
-            assistant,
-            state: State::new(),
-        };
-
-        (session, input_tx, cancel_tx)
-    }
-
-    async fn handle_input(&mut self, input: String) -> Result<(), Error> {
-        self.state
-            .push_user_event(TextEvent::ContentBlockStart {
-                index: 0,
-                content_block: ContentBlock::Text { text: input },
-            })
-            .await
-            .map_err(|_| Error::State)?;
-        self.state
-            .push_user_event(TextEvent::ContentBlockStop { index: 0 })
-            .await
-            .map_err(|_| Error::State)?;
-
-        let (tx, mut rx) = tokio::sync::mpsc::channel(100);
-        let messages = self
-            .state
-            .get_user_messages()
-            .await
-            .map_err(|_| Error::State)?;
-        self.assistant.handle_input(messages, tx);
-        'outer: loop {
-            tokio::select! {
-                _ = self.cancel_rx.recv() => {
-                    tracing::debug!("Cancelled");
-                    return Err(Error::Exit);
-                }
-                event = rx.recv() => {
-                    if let Some(ref event) = event {
-                        self.state.push_assistant_event(event.clone()).await.map_err(|_| Error::State)?;
-                        if event.is_complete() {
-                            tracing::debug!("completed");
-                            break 'outer;
-                        }
-                    } else {
-                        break 'outer;
-                    }
-                }
-            }
-        }
-        Ok(())
+    fn new(assistant: Assistant, messages: &[Message]) -> Self {
+        let layout = SessionLayout::new(messages);
+        SessionInner { assistant, layout }
     }
 
     async fn run(&mut self) -> Result<(), Error> {
-        while let Some(input) = self.input_rx.recv().await {
-            match self.handle_input(input).await {
-                Ok(()) => {}
-                Err(Error::Exit) => break,
-                Err(e) => return Err(e),
+        enable_raw_mode()?;
+        crossterm::execute!(stdout(), EnterAlternateScreen, EnableMouseCapture)?;
+        let mut term = Terminal::new(CrosstermBackend::new(stdout()))?;
+        let mut eventstream = crossterm::event::EventStream::new();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(100);
+
+        term.draw(|f| {
+            self.layout.draw(f);
+        })?;
+        loop {
+            self.layout.debug_print();
+            tokio::select! {
+                // new input event
+                input = eventstream.next() => {
+                    if let Some(Ok(event)) = input {
+                        match event.into() {
+                            Input { key: Key::Esc, .. } => break,
+                            Input {key: Key::Tab, ..} => {
+                                self.layout.switch();
+                            },
+                            Input {
+                                key: Key::Char('c'),
+                                ctrl: true,
+                                ..
+                            } => break,
+                            Input {
+                                key: Key::Char('n'),
+                                ctrl: true,
+                                shift,
+                                ..
+                            } => {
+                                if shift {
+                                    self.layout.new_page();
+                                } else {
+                                    self.layout.next_page();
+                                }
+                            }
+                            Input {
+                                key: Key::Char('p'),
+                                ctrl: true,
+                                ..
+                            } => {
+                                self.layout.previous_page();
+                            }
+                            Input {
+                                key: Key::Enter, ..
+                            } => {
+                                let messages = self.layout.messages();
+                                tracing::debug!("messages: {:?}", messages);
+                                self.assistant.handle_input(messages, tx.clone());
+                            }
+                            input => {
+                                self.layout.input(input);
+                            }
+                        }
+                    };
+                    term.draw(|f| {
+                        self.layout.draw(f);
+                    })?;
+                }
+                tx = rx.recv() => {
+                    if let Some(tx) = tx { self.layout.handle_assistant_event(tx).await }
+                    term.draw(|f| {
+                        self.layout.draw(f);
+                    })?;
+                }
             }
         }
-        Ok(())
-    }
-}
 
-#[cfg(test)]
-mod tests {
-    use rgpt_types::message::Message;
-
-    use crate::config::Config;
-
-    use super::*;
-
-    fn get_config() -> Config {
-        Config {
-            messages: Some(vec![
-                Message {
-                    role: "system".to_string(),
-                    content: "You are my testing assistant. Whatever you say, start with 'Testing: '".to_string(),
-                },
-                Message {
-                    role: "user".to_string(),
-                    content: "Your responses must be short and concise. Do not include explanations unless asked.".to_string(),
-                },
-                Message {
-                    role: "assistant".to_string(),
-                    content: "Understood.".to_string(),
-                },
-            ]),
-            ..Default::default()
-        }
-    }
-
-    #[tokio::test]
-    #[tracing_test::traced_test]
-    async fn test_session() -> Result<(), Box<dyn std::error::Error>> {
-        let cfg = get_config();
-        let assistant = Assistant::new(cfg)?;
-        let (mut session, input_tx, _kill_tx) = SessionInner::new(assistant);
-
-        tokio::spawn(async move {
-            input_tx
-                .send("Hello, give me something to think about".to_string())
-                .await
-                .unwrap();
-            input_tx.send("exit".to_string()).await.unwrap();
-        });
-
-        tokio::spawn(async move {
-            if let Err(e) = session.run().await {
-                tracing::error!("error: {}", e);
-            }
-        });
+        disable_raw_mode()?;
+        crossterm::execute!(
+            term.backend_mut(),
+            LeaveAlternateScreen,
+            DisableMouseCapture
+        )?;
+        term.show_cursor()?;
 
         Ok(())
     }
+
+    //fn draw_ui<B: Backend>(f: &mut Frame, input_buffer: &str, output_lines: &[String]) {
+    //    let chunks = Layout::default()
+    //        .direction(Direction::Horizontal)
+    //        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+    //        .split(f.area());
+    //
+    //    let input_block = Block::default().title("Input").borders(Borders::ALL);
+    //    let input = Paragraph::new(input_buffer)
+    //        .style(Style::default().fg(Color::Yellow))
+    //        .block(input_block);
+    //    f.render_widget(input, chunks[0]);
+    //
+    //    let output_block = Block::default().title("Output").borders(Borders::ALL);
+    //    let output_text: Vec<Span> = output_lines
+    //        .iter()
+    //        .map(|line| Span::raw(line.clone()))
+    //        .collect();
+    //    let output = Paragraph::new(output_text).block(output_block);
+    //    f.render_widget(output, chunks[1]);
+    //}
 }

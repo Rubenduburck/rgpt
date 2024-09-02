@@ -10,7 +10,7 @@ pub const _AI_PROMPT: &str = "\n\nAssistant:";
 
 /// Default model to use.
 pub const DEFAULT_MODEL: &str = "claude-3-5-sonnet-20240620";
-pub const DEFAULT_MAX_TOKENS: usize = 100;
+pub const DEFAULT_MAX_TOKENS: usize = 4096;
 /// Default v1 API base url.
 pub const API_BASE: &str = "https://api.anthropic.com";
 /// Auth header key.

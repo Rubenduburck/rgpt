@@ -1,20 +1,19 @@
-use std::io::{stdout, Write as _};
-
-use crossterm::{cursor, execute, style, terminal};
 use rgpt_types::{
     completion::{ContentBlock, ContentDelta, MessageStartData, TextEvent},
-    message::Message,
+    message::{Message, Role},
 };
 
 pub enum StateRequest {
-    PushUserEvent(TextEvent),
+    MessageEvent(Vec<Message>),
     PushAssistantEvent(TextEvent),
-    GetUserMessage(tokio::sync::oneshot::Sender<Vec<Message>>),
+    GetPromptMessages(tokio::sync::oneshot::Sender<Vec<Message>>),
 }
 
 pub struct StateInner {
     user_buffers: Vec<Vec<ContentBlock>>,
     assistant_buffers: Vec<Vec<ContentBlock>>,
+    system_buffers: Vec<Vec<ContentBlock>>,
+
     start_messages: Vec<MessageStartData>,
 
     last_drawn_lines: u16,
@@ -25,6 +24,7 @@ impl StateInner {
         StateInner {
             user_buffers: vec![vec![]],
             assistant_buffers: vec![],
+            system_buffers: vec![],
             start_messages: vec![],
 
             last_drawn_lines: 0,
@@ -38,111 +38,58 @@ impl StateInner {
         self.handle_requests(&mut rx).await
     }
 
-    // A function that draws the current state of the assistant
-    pub fn draw(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let print = |s: &str, line: u16| {
-            println!("{}/{}| {}", line, self.last_drawn_lines, s);
-            stdout().flush().unwrap();
-        };
-        // Clear the screen
-
-        if self.last_drawn_lines > 0 {
-            execute!(stdout(), cursor::MoveUp(self.last_drawn_lines))?;
+    pub async fn handle_messages(&mut self, messages: Vec<Message>) {
+        fn to_content_blocks(content: &str) -> Vec<ContentBlock> {
+            content
+                .lines()
+                .map(|line| ContentBlock::Text {
+                    text: line.to_string(),
+                })
+                .collect()
         }
-
-        let mut current_line = 0;
-
-        // Determine the maximum number of buffers
-        let max_buffers = self.user_buffers.len().max(self.assistant_buffers.len());
-
-        // Draw buffers alternating between user and assistant
-        for i in 0..max_buffers {
-            // Draw user buffer if available
-            if i < self.user_buffers.len() {
-                execute!(stdout(), style::SetForegroundColor(style::Color::Blue))?;
-                for block in &self.user_buffers[i] {
-                    print(&block.text().unwrap_or_default(), current_line);
-                    current_line += 1;
+        for message in messages {
+            match message.role {
+                Role::User => {
+                    self.user_buffers.push(to_content_blocks(&message.content));
                 }
-            }
-
-            // Draw assistant buffer if available
-            if i < self.assistant_buffers.len() {
-                execute!(stdout(), style::SetForegroundColor(style::Color::Green))?;
-                for block in &self.assistant_buffers[i] {
-                    print(&block.text().unwrap_or_default(), current_line);
-                    current_line += 1;
+                Role::Assistant => {
+                    self.assistant_buffers
+                        .push(to_content_blocks(&message.content));
+                }
+                Role::System => {
+                    self.system_buffers
+                        .push(to_content_blocks(&message.content));
                 }
             }
         }
-
-        // Clear any remaining lines
-        for _ in current_line..self.last_drawn_lines {
-            execute!(stdout(), terminal::Clear(terminal::ClearType::CurrentLine))?;
-            execute!(stdout(), cursor::MoveToNextLine(1))?;
-        }
-
-        // Reset color and flush stdout
-        execute!(stdout(), style::SetForegroundColor(style::Color::Reset))?;
-        stdout().flush()?;
-
-        self.last_drawn_lines = current_line;
-
-        Ok(())
     }
 
     pub async fn handle_requests(
         &mut self,
         rx: &mut tokio::sync::mpsc::Receiver<StateRequest>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        self.draw()?;
         while let Some(request) = rx.recv().await {
             match request {
-                StateRequest::PushUserEvent(event) => self.push_user_event(event),
+                StateRequest::MessageEvent(messages) => {
+                    self.handle_messages(messages).await;
+                }
                 StateRequest::PushAssistantEvent(event) => self.push_assistant_event(event),
-                StateRequest::GetUserMessage(tx) => {
+                StateRequest::GetPromptMessages(tx) => {
                     let _ = tx.send(self.get_user_message());
                 }
             }
-            self.draw()?;
         }
         Ok(())
     }
 
-    pub fn push_user_event(&mut self, event: TextEvent) {
-        pub fn new_content_block(
-            state: &mut StateInner,
-            _index: usize,
-            content_block: ContentBlock,
-        ) {
-            if state.user_buffers.last().unwrap().is_empty() {
-                state.user_buffers.last_mut().unwrap().push(content_block);
-            } else {
-                state.user_buffers.push(vec![content_block]);
-            }
-        }
-
-        pub fn update_content_block(state: &mut StateInner, index: usize, delta: ContentDelta) {
-            let buffer = state.user_buffers.last_mut().unwrap();
-            if let Some(block) = buffer.get_mut(index) {
-                block.update(&delta);
-            }
-        }
-
-        match event {
-            TextEvent::MessageStart { .. } => {}
-            TextEvent::ContentBlockStart {
-                index,
-                content_block,
-            } => new_content_block(self, index, content_block),
-            TextEvent::ContentBlockDelta { index, delta } => {
-                update_content_block(self, index, delta)
-            }
-            TextEvent::MessageStop => {}
-            TextEvent::Null => {}
-            TextEvent::MessageDelta { .. } => {}
-            TextEvent::ContentBlockStop { .. } => {}
-        }
+    pub fn push_user_event(&mut self, event: String) {
+        let content_blocks = event
+            .lines()
+            .map(|line| ContentBlock::Text {
+                text: line.to_string(),
+            })
+            .collect::<Vec<_>>();
+        self.user_buffers.push(content_blocks);
     }
 
     pub fn push_assistant_event(&mut self, event: TextEvent) {
@@ -180,19 +127,33 @@ impl StateInner {
         }
     }
 
+    // Get full history of messages
+    // First message is a system message if it exists
+    // After that alternating user and assistant messages
     pub fn get_user_message(&self) -> Vec<Message> {
-        self.user_buffers
-            .last()
-            .map(|buffer| {
-                let role = "user".to_string();
-                let content = buffer
-                    .iter()
-                    .map(|block| block.text().unwrap_or_default().to_string())
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                vec![Message { role, content }]
-            })
-            .unwrap_or_default()
+        fn to_messages(buffers: &[Vec<ContentBlock>], role: Role) -> Vec<Message> {
+            buffers
+                .iter()
+                .map(|buffer| {
+                    let content = buffer
+                        .iter()
+                        .map(|block| block.text().unwrap_or_default().to_string())
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    Message { role: role.clone(), content }
+                })
+                .collect()
+        }
+        let system_messages = to_messages(&self.system_buffers, Role::System);
+        let user_messages = to_messages(&self.user_buffers, Role::User);
+        let assistant_messages = to_messages(&self.assistant_buffers, Role::Assistant);
+
+        let mut messages = system_messages;
+        for (user, assistant) in user_messages.into_iter().zip(assistant_messages) {
+            messages.push(user);
+            messages.push(assistant);
+        }
+        messages
     }
 
     pub fn get_assistant_buffer(&self) -> Vec<ContentBlock> {
@@ -209,6 +170,7 @@ impl Default for StateInner {
     }
 }
 
+#[derive(Clone)]
 pub struct State {
     tx: tokio::sync::mpsc::Sender<StateRequest>,
 }
@@ -225,11 +187,8 @@ impl State {
         State { tx }
     }
 
-    pub async fn push_user_event(
-        &self,
-        event: TextEvent,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(self.tx.send(StateRequest::PushUserEvent(event)).await?)
+    pub async fn push_messages(&self, messages: &[Message]) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(self.tx.send(StateRequest::MessageEvent(messages.to_vec())).await?)
     }
 
     pub async fn push_assistant_event(
@@ -242,9 +201,9 @@ impl State {
             .await?)
     }
 
-    pub async fn get_user_messages(&self) -> Result<Vec<Message>, Box<dyn std::error::Error>> {
+    pub async fn get_prompt_messages(&self) -> Result<Vec<Message>, Box<dyn std::error::Error>> {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        self.tx.send(StateRequest::GetUserMessage(tx)).await?;
+        self.tx.send(StateRequest::GetPromptMessages(tx)).await?;
         Ok(rx.await?)
     }
 }

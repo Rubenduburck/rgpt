@@ -65,17 +65,46 @@ pub struct CompleteResponse {
     pub id: String,
 }
 
+#[derive(Debug, Deserialize, Clone, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum Role {
+    User,
+    Assistant,
+    System,
+}
+
+impl From<&str> for Role {
+    fn from(role: &str) -> Self {
+        match role {
+            "user" => Self::User,
+            "assistant" => Self::Assistant,
+            "system" => Self::System,
+            _ => Self::User,
+        }
+    }
+}
+
+impl From<rgpt_types::message::Role> for Role {
+    fn from(role: rgpt_types::message::Role) -> Self {
+        match role {
+            rgpt_types::message::Role::User => Self::User,
+            rgpt_types::message::Role::Assistant => Self::Assistant,
+            rgpt_types::message::Role::System => Self::System,
+        }
+    }
+}
+
 // Messages API
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Message {
-    pub role: String,
+    pub role: Role,
     pub content: String,
 }
 
 impl From<rgpt_types::message::Message> for Message {
     fn from(message: rgpt_types::message::Message) -> Self {
         Self {
-            role: message.role,
+            role: message.role.into(),
             content: message.content,
         }
     }
@@ -101,7 +130,7 @@ impl From<Request> for MessagesRequest {
             val.messages
                 .into_iter()
                 .fold((None, vec![]), |(system, mut messages), message| {
-                    if message.role == "system" {
+                    if message.role == rgpt_types::message::Role::System {
                         (Some(message.content), messages)
                     } else {
                         messages.push(message.into());

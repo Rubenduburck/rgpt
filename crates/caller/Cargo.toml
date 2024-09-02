@@ -12,3 +12,4 @@ tokio-stream = { workspace = true}
 reqwest-eventsource = { workspace = true}
 thiserror = { workspace = true}
 backoff = { workspace = true, features = ["tokio"], default-features = false }
+tracing = { workspace = true}

@@ -50,6 +50,7 @@ impl Client {
         O: DeserializeOwned + Send + 'static,
         E: Send + 'static,
     {
+        tracing::trace!("POSTing to {}", uri);
         let event_source = self
             .http_client
             .post(uri)
@@ -57,6 +58,7 @@ impl Client {
             .body(serde_json::to_vec(&request)?)
             .eventsource()?;
 
+        tracing::trace!("Starting event source");
         Ok(stream(event_source, handler).await)
     }
 
@@ -146,16 +148,19 @@ where
 {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
 
+    tracing::trace!("Spawning event source stream");
     tokio::spawn(async move {
         while let Some(ev) = event_source.next().await {
             match ev {
                 Ok(ev) => {
+                    tracing::trace!("Received event: {:?}", ev);
                     if let Err(_e) = tx.send(event_handler(ev)) {
                         // rx dropped
                         break;
                     }
                 }
-                Err(_e) => {
+                Err(e) => {
+                    tracing::error!("Error in event source stream {:?}", e);
                     break;
                 }
             }

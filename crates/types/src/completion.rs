@@ -29,7 +29,7 @@ impl Default for RequestBuilder {
         Self {
             messages: vec![],
             model: None,
-            max_tokens: 100,
+            max_tokens: 4096,
             stop_sequences: None,
             stream: false,
             system: None,

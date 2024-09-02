@@ -58,6 +58,7 @@ impl Provider {
         R: Into<MessagesRequest>,
     {
         let request = request.into();
+        tracing::debug!("request: {:?}", request);
         if !request.stream {
             return Err(Error::InvalidArgument(
                 "When stream is false, use messages() instead".into(),

@@ -1,7 +1,5 @@
 pub mod error;
 
-use std::{io::Write as _, process::exit};
-
 use clap::Parser;
 use error::Error;
 use rgpt_assistant::{config::Config, Assistant};
@@ -35,21 +33,8 @@ impl Args {
     }
 }
 
-fn ctrlc_handler() {
-    fn reset_terminal() {
-        print!("\x1b[?25h");
-        std::io::stdout().flush().unwrap();
-    }
-    reset_terminal();
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    let _ = ctrlc::set_handler(|| {
-        ctrlc_handler();
-    });
-    rgpt_utils::logging::init_logger();
-    Args::parse().execute().await?;
-    // Exit program
-    exit(0);
+    rgpt_utils::logging::init_logger(None);
+    Args::parse().execute().await
 }
