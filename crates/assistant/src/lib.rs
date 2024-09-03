@@ -47,7 +47,6 @@ impl Assistant {
 
     fn build_request(&self, messages: Vec<Message>) -> Request {
         RequestBuilder::new()
-            .messages(self.init_messages())
             .messages(messages)
             .model(self.config.model.clone())
             .temperature(self.config.temperature)

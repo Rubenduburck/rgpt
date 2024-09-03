@@ -16,7 +16,7 @@ use tui_textarea::{Input, Key, TextArea};
 
 use crate::{
     error::Error,
-    pagetree::{PageTree, PageTreeNodeId},
+    pagetree::{NodeId, Root},
     Assistant,
 };
 use rgpt_types::{
@@ -115,13 +115,21 @@ impl From<SessionAreaId> for String {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SessionTextArea<'a> {
     pub id: SessionAreaId,
     pub text_area: TextArea<'a>,
 
     // FIXME: patch until tui-textarea implements wrapping.
     pub max_line_length: usize,
+}
+
+impl<'a> std::fmt::Debug for SessionTextArea<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SessionTextArea")
+            .field("id", &self.id)
+            .finish()
+    }
 }
 
 impl<'a> SessionTextArea<'a> {
@@ -132,13 +140,15 @@ impl<'a> SessionTextArea<'a> {
             max_line_length,
         };
         s.text_area.set_cursor_line_style(Style::default());
-        for input in string_to_inputs(lines.join("\n").as_str()) {
-            s.input(input);
+        if !lines.is_empty() {
+            for input in string_to_inputs(lines.join("\n").as_str()) {
+                s.input(input);
+            }
+            s.input(Input {
+                key: Key::Enter,
+                ..Default::default()
+            });
         }
-        s.input(Input {
-            key: Key::Enter,
-            ..Default::default()
-        });
         s.inactivate();
         s
     }
@@ -157,9 +167,20 @@ impl<'a> SessionTextArea<'a> {
         self.text_area.lines()
     }
 
-    fn is_empty(&self) -> bool {
+    pub fn message(&self) -> Option<Message> {
+        if self.is_empty() {
+            None
+        } else {
+            Some(Message {
+                role: self.id.into(),
+                content: self.lines().join("\n"),
+            })
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
         let lines = self.text_area.lines();
-        lines.is_empty() || lines.len() == 1 && lines[0].is_empty()
+        lines.is_empty() || lines.len() == 1 && (lines[0].is_empty() || lines[0] == "\n")
     }
 
     fn input(&mut self, input: Input) {
@@ -214,15 +235,27 @@ impl<'a> From<&'a SessionTextArea<'a>> for Message {
 }
 
 pub struct SessionLayout<'a> {
-    pub page_tree: PageTree<'a>,
-    pub current_node: PageTreeNodeId,
-
-    pub system_area: SessionTextArea<'a>,
-
+    pub page_tree: Root<'a>,
+    pub current_node: NodeId,
     pub active: SessionAreaId,
+
+    pub assistant_stream_node: Option<NodeId>,
 
     // FIXME: patch until tui-textarea implements wrapping.
     pub max_line_length: usize,
+}
+
+impl std::fmt::Debug for SessionLayout<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SessionLayout")
+            .field(
+                "current_node",
+                self.page_tree.get(self.current_node).unwrap(),
+            )
+            .field("active", &self.active)
+            .field("max_line_length", &self.max_line_length)
+            .finish()
+    }
 }
 
 impl<'a> SessionLayout<'a> {
@@ -253,24 +286,27 @@ impl<'a> SessionLayout<'a> {
             )))
             .collect::<Vec<_>>();
 
-        let mut page_tree = PageTree::new();
-        let current_node = page_tree
-            .insert_text_areas(None, text_areas)
-            .unwrap_or(page_tree.root_id());
-
-        let system_area = SessionTextArea::new(SessionAreaId::System, &[], max_line_length);
+        let mut page_tree = Root::new();
+        let current_node = match page_tree.insert_text_areas(None, text_areas) {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::error!("error inserting messages: {}", e);
+                NodeId::default()
+            }
+        };
 
         let active = SessionAreaId::User;
         let mut layout = SessionLayout {
             page_tree,
             current_node,
-            system_area,
             active,
             max_line_length,
+            assistant_stream_node: None,
         };
-        layout.current_node_area_mut(SessionAreaId::User).activate();
+        layout.activate(active);
         layout
     }
+
     fn chunks(&self, chunk: Rect) -> (Rc<[Rect]>, Rc<[Rect]>) {
         let outer_layout = Layout::default()
             .direction(Direction::Horizontal)
@@ -286,14 +322,14 @@ impl<'a> SessionLayout<'a> {
 
     fn current_node_area(&self, id: SessionAreaId) -> &SessionTextArea<'a> {
         match id {
-            SessionAreaId::System => &self.system_area,
+            SessionAreaId::System => self.page_tree.get_system_area(),
             _ => self.page_tree.get(self.current_node).unwrap().area(id),
         }
     }
 
     fn parent_node_area(&self, id: SessionAreaId) -> &SessionTextArea<'a> {
         match id {
-            SessionAreaId::System => &self.system_area,
+            SessionAreaId::System => self.page_tree.get_system_area(),
             _ => {
                 let parent_id = self.page_tree.get(self.current_node).unwrap().parent;
                 self.page_tree.get(parent_id).unwrap().area(id)
@@ -303,7 +339,7 @@ impl<'a> SessionLayout<'a> {
 
     fn current_node_area_mut(&mut self, id: SessionAreaId) -> &mut SessionTextArea<'a> {
         match id {
-            SessionAreaId::System => &mut self.system_area,
+            SessionAreaId::System => self.page_tree.get_system_area_mut(),
             _ => self
                 .page_tree
                 .get_mut(self.current_node)
@@ -313,12 +349,6 @@ impl<'a> SessionLayout<'a> {
     }
 
     fn activate(&mut self, id: SessionAreaId) {
-        if self.active == SessionAreaId::System {
-            self.system_area.inactivate();
-        }
-        if id == SessionAreaId::System {
-            self.system_area.activate();
-        }
         self.page_tree.activate(self.current_node, id);
         self.active = id;
     }
@@ -336,6 +366,7 @@ impl<'a> SessionLayout<'a> {
     }
 
     fn draw(&self, f: &mut Frame) {
+        tracing::debug!("layout: {:?}", self);
         let (outer_layout, user_layout) = self.chunks(f.area());
         let user_area = self.current_node_area(SessionAreaId::User);
         let assistant_area = match self.current_node_area(SessionAreaId::Assistant) {
@@ -354,50 +385,80 @@ impl<'a> SessionLayout<'a> {
         messages
     }
 
-    fn switch_node(&mut self, node: PageTreeNodeId) -> Option<PageTreeNodeId> {
+    fn switch_node(&mut self, node: NodeId) -> Option<NodeId> {
         self.current_node = node;
         self.activate(self.active);
         Some(node)
     }
 
-    fn down_one(&mut self) -> Option<PageTreeNodeId> {
+    fn up_one(&mut self) -> Option<NodeId> {
         self.switch_node(self.page_tree.children(self.current_node).first()?.id)
     }
 
-    fn up_one(&mut self) -> Option<PageTreeNodeId> {
+    fn down_one(&mut self) -> Option<NodeId> {
         self.switch_node(self.page_tree.parent(self.current_node)?.id)
     }
 
-    fn next_branch(&mut self) -> Option<PageTreeNodeId> {
+    fn next_branch(&mut self) -> Option<NodeId> {
         self.switch_node(self.page_tree.next_sibling(self.current_node)?.id)
     }
 
-    fn previous_branch(&mut self) -> Option<PageTreeNodeId> {
+    fn previous_branch(&mut self) -> Option<NodeId> {
         self.switch_node(self.page_tree.previous_sibling(self.current_node)?.id)
     }
 
-    fn new_leaf(&mut self) {
-        let id = self.page_tree.insert_child(self.current_node);
-        self.current_node = id;
+    fn new_branch(&mut self, node_id: NodeId) {
+        let id = self.page_tree.insert_child(
+            self.page_tree
+                .parent(node_id)
+                .map_or(NodeId::Root, |n| n.id),
+        );
+        tracing::debug!("new branch {:?} from {:?}", id, node_id);
+        self.switch_node(id);
     }
 
-    fn update(&mut self, messages: &[Message], node: Option<PageTreeNodeId>) -> Result<(), Error> {
-        for message in messages {
-            if message.role == Role::System {
-                self.system_area.text_area = TextArea::from(message.content.lines());
-            }
-        }
+    fn new_branch_at_current(&mut self) {
+        self.new_branch(self.current_node);
+    }
 
-        let text_areas = messages.iter().filter(|m| m.role != Role::System).map(|m| {
-            let id = SessionAreaId::from(m.role);
-            let lines = m.content.lines().collect::<Vec<_>>();
-            SessionTextArea::new(id, lines.as_slice(), self.max_line_length)
-        }).collect::<Vec<_>>();
+    fn update(&mut self, messages: &[Message], node: Option<NodeId>) -> Result<(), Error> {
+        if messages.is_empty() {
+            return Ok(());
+        }
+        let text_areas = messages
+            .iter()
+            .map(|m| {
+                let id = SessionAreaId::from(m.role);
+                let lines = m.content.lines().collect::<Vec<_>>();
+                SessionTextArea::new(id, lines.as_slice(), self.max_line_length)
+            })
+            .collect::<Vec<_>>();
 
         let id = self.page_tree.insert_text_areas(node, text_areas)?;
 
         self.switch_node(id);
         Ok(())
+    }
+
+    fn set_assistant_stream_node_to_current(&mut self) {
+        self.assistant_stream_node = Some(self.current_node);
+    }
+
+    fn get_assistant_stream_node(&self) -> Option<NodeId> {
+        self.assistant_stream_node
+    }
+
+    fn reset_assistant_stream_node(&mut self) {
+        self.assistant_stream_node = None;
+    }
+
+    fn new_child(&mut self, node: NodeId) {
+        let id = self.page_tree.insert_child(node);
+        self.switch_node(id);
+    }
+
+    fn new_child_at_current(&mut self) {
+        self.new_child(self.current_node);
     }
 
     async fn handle_assistant_event(&mut self, event: TextEvent) {
@@ -424,7 +485,15 @@ impl<'a> SessionLayout<'a> {
         fn string_to_inputs(s: &str) -> Vec<Input> {
             s.chars().map(char_to_input).collect()
         }
-        let area = self.current_node_area_mut(SessionAreaId::Assistant);
+        tracing::trace!("assistant event: {:?}", event);
+        let area = if let Some(node) = self.get_assistant_stream_node() {
+            self.page_tree
+                .get_mut(node)
+                .unwrap()
+                .area_mut(SessionAreaId::Assistant)
+        } else {
+            self.current_node_area_mut(SessionAreaId::Assistant)
+        };
         match event {
             TextEvent::Null => {}
             TextEvent::MessageStart { .. } => {
@@ -445,7 +514,7 @@ impl<'a> SessionLayout<'a> {
             TextEvent::MessageDelta { .. } => {}
             TextEvent::MessageStop => {
                 tracing::trace!("message stop");
-                self.new_leaf();
+                self.reset_assistant_stream_node();
             }
         }
         tracing::trace!("finished")
@@ -494,13 +563,19 @@ impl SessionInner {
                                 ..
                             } => break,
                             Input {
-                                key: Key::Char('n'),
+                                key: Key::Char('b'),
                                 ctrl: true,
-                                shift: _,
                                 ..
                             } => {
-                                self.layout.next_branch();
-                                }
+                                self.layout.new_branch_at_current();
+                            }
+                            Input {
+                                key: Key::Char('n'),
+                                ctrl: true,
+                                ..
+                            } => {
+                                    self.layout.next_branch();
+                            }
                             Input {
                                 key: Key::Char('p'),
                                 ctrl: true,
@@ -523,13 +598,15 @@ impl SessionInner {
                                 self.layout.down_one();
                             }
                             Input {
-                                key: Key::Char('i'),
+                                key: Key::Char('j'),
                                 ctrl: true,
                                 ..
                             } => {
                                 let messages = self.layout.messages();
-                                tracing::debug!("messages: {:?}", messages);
+                                tracing::debug!("sending messages to assistant: {:?}", messages);
                                 self.assistant.handle_input(messages, tx.clone());
+                                self.layout.set_assistant_stream_node_to_current();
+                                self.layout.new_child_at_current();
                             }
                             input => {
                                 self.layout.input(input);
@@ -545,7 +622,7 @@ impl SessionInner {
                     })?;
                 }
                 tx = rx.recv() => {
-                    if let Some(tx) = tx { self.layout.handle_assistant_event(tx).await }
+                    if let Some(event) = tx { self.layout.handle_assistant_event(event).await }
                     term.draw(|f| {
                         self.layout.draw(f);
                     })?;
