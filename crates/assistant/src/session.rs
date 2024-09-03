@@ -1,10 +1,10 @@
+use crate::textarea::SessionAreaId;
+use crate::textarea::SessionTextArea;
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use futures::stream::StreamExt;
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::widgets::{Block, Borders};
 use ratatui::Terminal;
 use ratatui::{backend::CrosstermBackend, layout::Rect};
 use ratatui::{
@@ -28,32 +28,6 @@ pub struct Session {
     inner: SessionInner,
 }
 
-// FIXME: hacky-ass functions
-fn char_to_input(c: char) -> Input {
-    fn enter() -> Input {
-        Input {
-            key: Key::Enter,
-            ..Default::default()
-        }
-    }
-    fn default(c: char, uppercase: bool) -> Input {
-        Input {
-            key: Key::Char(c),
-            shift: uppercase,
-            ..Default::default()
-        }
-    }
-    match c {
-        '\n' => enter(),
-        c => default(c, false),
-    }
-}
-
-// FIXME: hacky-ass functions
-fn string_to_inputs(s: &str) -> Vec<Input> {
-    s.chars().map(char_to_input).collect()
-}
-
 impl Session {
     pub fn setup(assistant: Assistant) -> Result<Self, Error> {
         Ok(Session {
@@ -64,173 +38,6 @@ impl Session {
     pub async fn start(&mut self, messages: &[Message]) -> Result<(), Error> {
         self.inner.run(messages).await?;
         Ok(())
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SessionAreaId {
-    User,
-    Assistant,
-    System,
-}
-
-impl From<rgpt_types::message::Role> for SessionAreaId {
-    fn from(id: rgpt_types::message::Role) -> Self {
-        match id {
-            Role::User => SessionAreaId::User,
-            Role::Assistant => SessionAreaId::Assistant,
-            Role::System => SessionAreaId::System,
-        }
-    }
-}
-
-impl From<SessionAreaId> for rgpt_types::message::Role {
-    fn from(id: SessionAreaId) -> Self {
-        match id {
-            SessionAreaId::User => Role::User,
-            SessionAreaId::Assistant => Role::Assistant,
-            SessionAreaId::System => Role::System,
-        }
-    }
-}
-
-impl From<&str> for SessionAreaId {
-    fn from(id: &str) -> Self {
-        match id {
-            "user" => SessionAreaId::User,
-            "assistant" => SessionAreaId::Assistant,
-            "system" => SessionAreaId::System,
-            _ => SessionAreaId::User,
-        }
-    }
-}
-
-impl From<SessionAreaId> for String {
-    fn from(id: SessionAreaId) -> Self {
-        match id {
-            SessionAreaId::User => "user".to_string(),
-            SessionAreaId::Assistant => "assistant".to_string(),
-            SessionAreaId::System => "system".to_string(),
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct SessionTextArea<'a> {
-    pub id: SessionAreaId,
-    pub text_area: TextArea<'a>,
-
-    // FIXME: patch until tui-textarea implements wrapping.
-    pub max_line_length: usize,
-}
-
-impl<'a> std::fmt::Debug for SessionTextArea<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SessionTextArea")
-            .field("id", &self.id)
-            .finish()
-    }
-}
-
-impl<'a> SessionTextArea<'a> {
-    pub fn new(id: SessionAreaId, lines: &[&str], max_line_length: usize) -> Self {
-        let mut s = SessionTextArea {
-            id,
-            text_area: TextArea::default(),
-            max_line_length,
-        };
-        s.text_area.set_cursor_line_style(Style::default());
-        if !lines.is_empty() {
-            for input in string_to_inputs(lines.join("\n").as_str()) {
-                s.input(input);
-            }
-            s.input(Input {
-                key: Key::Enter,
-                ..Default::default()
-            });
-        }
-        s.inactivate();
-        s
-    }
-
-    fn title(&self) -> String {
-        format!("{}: {}", String::from(self.id), "temp")
-    }
-
-    fn clear(&mut self) {
-        self.text_area = TextArea::default();
-        self.text_area.set_cursor_line_style(Style::default());
-        self.inactivate();
-    }
-
-    fn lines(&self) -> &[String] {
-        self.text_area.lines()
-    }
-
-    pub fn message(&self) -> Option<Message> {
-        if self.is_empty() {
-            None
-        } else {
-            Some(Message {
-                role: self.id.into(),
-                content: self.lines().join("\n"),
-            })
-        }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        let lines = self.text_area.lines();
-        lines.is_empty() || lines.len() == 1 && (lines[0].is_empty() || lines[0] == "\n")
-    }
-
-    fn input(&mut self, input: Input) {
-        match input.key {
-            Key::Char(_) => {
-                let current_line_length = self.lines().last().map_or(0, |l| l.len());
-                if current_line_length + 1 >= self.max_line_length {
-                    self.text_area.input(Input {
-                        key: Key::Enter,
-                        ..input
-                    });
-                }
-                self.text_area.input(input)
-            }
-            _ => self.text_area.input(input),
-        };
-    }
-
-    fn text_area(&self) -> &TextArea<'a> {
-        &self.text_area
-    }
-
-    pub fn activate(&mut self) {
-        self.text_area
-            .set_cursor_style(Style::default().add_modifier(Modifier::REVERSED));
-        self.text_area.set_block(
-            Block::default()
-                .borders(Borders::ALL)
-                .style(Style::default())
-                .title(self.title()),
-        );
-    }
-
-    pub fn inactivate(&mut self) {
-        self.text_area.set_cursor_style(Style::default());
-        self.text_area.set_block(
-            Block::default()
-                .borders(Borders::ALL)
-                .style(Style::default().fg(Color::DarkGray))
-                .title(self.title()),
-        );
-    }
-}
-
-impl<'a> From<&'a SessionTextArea<'a>> for Message {
-    fn from(text_area: &'a SessionTextArea<'a>) -> Self {
-        Message {
-            role: text_area.id.into(),
-            content: text_area.lines().join("\n"),
-        }
     }
 }
 
@@ -267,27 +74,18 @@ impl<'a> SessionLayout<'a> {
             .unwrap_or(70);
         tracing::trace!("max_line_length: {}", max_line_length);
 
-        let text_areas = messages
-            .iter()
-            .map(|m| {
-                let id = SessionAreaId::from(m.role);
-                let lines = m.content.lines().collect::<Vec<_>>();
-                SessionTextArea::new(id, lines.as_slice(), max_line_length)
-            })
-            .chain(std::iter::once(SessionTextArea::new(
-                SessionAreaId::User,
-                &[],
-                max_line_length,
-            )))
-            .chain(std::iter::once(SessionTextArea::new(
-                SessionAreaId::Assistant,
-                &[],
-                max_line_length,
-            )))
-            .collect::<Vec<_>>();
+        let mut messages = messages.to_vec();
+        messages.push(Message {
+            role: Role::User,
+            content: "".to_string(),
+        });
+        messages.push(Message {
+            role: Role::Assistant,
+            content: "".to_string(),
+        });
 
-        let mut page_tree = Root::new();
-        let current_node = match page_tree.insert_text_areas(None, text_areas) {
+        let mut page_tree = Root::new(max_line_length);
+        let current_node = match page_tree.insert_messages(None, messages) {
             Ok(id) => id,
             Err(e) => {
                 tracing::error!("error inserting messages: {}", e);
@@ -365,18 +163,30 @@ impl<'a> SessionLayout<'a> {
         self.current_node_area_mut(self.active).input(input);
     }
 
-    fn draw(&self, f: &mut Frame) {
+    fn user_text_area_to_draw(&self) -> &TextArea {
+        self.current_node_area(SessionAreaId::User).text_area()
+    }
+
+    fn assistant_text_area_to_draw(&self) -> &TextArea {
+        match self.current_node_area(SessionAreaId::Assistant) {
+            node if node.is_empty() => self.parent_node_area(SessionAreaId::Assistant).text_area(),
+            node => node.text_area(),
+        }
+    }
+
+    fn system_text_area_to_draw(&self) -> &TextArea {
+        self.current_node_area(SessionAreaId::System).text_area()
+    }
+
+    fn draw(&mut self, f: &mut Frame) {
         tracing::debug!("layout: {:?}", self);
         let (outer_layout, user_layout) = self.chunks(f.area());
-        let user_area = self.current_node_area(SessionAreaId::User);
-        let assistant_area = match self.current_node_area(SessionAreaId::Assistant) {
-            area if area.is_empty() => self.parent_node_area(SessionAreaId::Assistant),
-            area => area,
-        };
-        let system_area = self.current_node_area(SessionAreaId::System);
-        f.render_widget(user_area.text_area(), user_layout[1]);
-        f.render_widget(assistant_area.text_area(), outer_layout[1]);
-        f.render_widget(system_area.text_area(), user_layout[0]);
+        let user_area = self.user_text_area_to_draw();
+        let assistant_area = self.assistant_text_area_to_draw();
+        let system_area = self.system_text_area_to_draw();
+        f.render_widget(user_area, user_layout[1]);
+        f.render_widget(assistant_area, outer_layout[1]);
+        f.render_widget(system_area, user_layout[0]);
     }
 
     fn messages(&self) -> Vec<Message> {
@@ -425,16 +235,8 @@ impl<'a> SessionLayout<'a> {
         if messages.is_empty() {
             return Ok(());
         }
-        let text_areas = messages
-            .iter()
-            .map(|m| {
-                let id = SessionAreaId::from(m.role);
-                let lines = m.content.lines().collect::<Vec<_>>();
-                SessionTextArea::new(id, lines.as_slice(), self.max_line_length)
-            })
-            .collect::<Vec<_>>();
 
-        let id = self.page_tree.insert_text_areas(node, text_areas)?;
+        let id = self.page_tree.insert_messages(node, messages.to_vec())?;
 
         self.switch_node(id);
         Ok(())
@@ -560,6 +362,7 @@ impl SessionInner {
                             },
                             Input {
                                 key: Key::Char('c'),
+                                ctrl: true,
                                 ..
                             } => break,
                             Input {

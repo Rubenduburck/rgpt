@@ -3,6 +3,7 @@ pub mod error;
 pub mod query;
 pub mod session;
 pub mod pagetree;
+pub mod textarea;
 
 use std::sync::Arc;
 

@@ -1,6 +1,6 @@
 use crate::{
     error::Error,
-    session::{SessionAreaId, SessionTextArea},
+    textarea::{SessionAreaId, SessionTextArea},
 };
 use rgpt_types::message::Message;
 
@@ -11,6 +11,15 @@ pub enum NodeId {
     Node(u16),
 }
 
+impl From<NodeId> for String {
+    fn from(id: NodeId) -> Self {
+        match id {
+            NodeId::Root => "root".to_string(),
+            NodeId::Node(id) => format!("{}", id),
+        }
+    }
+}
+
 pub struct Root<'a> {
     pub nodes: Vec<Node<'a>>,
     pub active: NodeId,
@@ -19,11 +28,11 @@ pub struct Root<'a> {
 }
 
 impl<'a> Root<'a> {
-    pub fn new() -> Self {
+    pub fn new(max_line_length: usize) -> Self {
         Root {
             nodes: vec![],
             active: NodeId::default(),
-            system_area: SessionTextArea::new(SessionAreaId::System, &[], 70),
+            system_area: SessionTextArea::new(SessionAreaId::System, &[], max_line_length),
             children: vec![],
         }
     }
@@ -35,6 +44,7 @@ impl<'a> Root<'a> {
             self.active = NodeId::Root;
         }
         self.system_area.inactivate();
+        self.system_area.set_title("root > system".to_string());
         match area {
             SessionAreaId::System => {
                 self.system_area.activate();
@@ -69,68 +79,87 @@ impl<'a> Root<'a> {
         }
     }
 
-    // TODO: make this order-agnostic
-    pub fn insert_text_areas(
-        &mut self,
-        parent: Option<NodeId>,
-        mut text_areas: Vec<SessionTextArea<'a>>,
-    ) -> Result<NodeId, Error> {
-        fn inner<'a>(
-            tree: &mut Root<'a>,
+    pub fn insert_messages(&mut self, parent: Option<NodeId>, messages: Vec<Message>) -> Result<NodeId, Error> {
+        fn inner(
+            tree: &mut Root,
             parent: Option<NodeId>,
-            mut stack: Vec<SessionTextArea<'a>>,
+            mut stack: Vec<Message>,
         ) -> Result<NodeId, Error> {
-            tracing::trace!("stack: {:?}", stack);
             if stack.is_empty() {
                 return Ok(parent.unwrap_or(NodeId::Root));
             }
             let parent = parent.unwrap_or(NodeId::Root);
             let child = tree.insert_child(parent);
-            tracing::trace!("inserting child {:?} under parent {:?}", child, parent);
             let child_node = tree.get_mut(child).unwrap();
+            let message = stack.pop().unwrap();
 
-            let next_area = stack.pop().unwrap();
-            if next_area.id != SessionAreaId::User {
-                return Err(Error::Generic("invalid area id".to_string()));
+            if SessionAreaId::from(message.role) != SessionAreaId::User {
+                return Err(Error::Generic("invalid message role".to_string()));
             }
-            child_node.user_area = next_area;
+            child_node.user_area.set_message(message);
 
-            let next_area = if stack.is_empty() {
+            let message = if stack.is_empty() {
                 return Ok(child);
             } else {
                 stack.pop().unwrap()
             };
-            if next_area.id != SessionAreaId::Assistant {
-                return Err(Error::Generic("invalid area id".to_string()));
+
+            if SessionAreaId::from(message.role) != SessionAreaId::Assistant {
+                return Err(Error::Generic("invalid message role".to_string()));
             }
-            child_node.assistant_area = next_area;
+
+            child_node.assistant_area.set_message(message);
 
             inner(tree, Some(child), stack)
         }
-        let system_area = text_areas
-            .iter()
-            .find(|area| area.id == SessionAreaId::System);
-        if let Some(system_area) = system_area {
-            self.system_area = system_area.clone();
-        }
-        text_areas.reverse();
-        text_areas.pop();
 
-        inner(self, parent, text_areas)
+        let mut messages = messages;
+        let system_message = messages
+            .iter()
+            .find(|message| message.role == rgpt_types::message::Role::System);
+        if let Some(system_message) = system_message {
+            self.system_area.set_message(system_message.clone());
+            messages.retain(|m| m.role != rgpt_types::message::Role::System);
+        }
+        messages.reverse();
+        inner(self, parent, messages)
+    }
+
+    pub fn walk_up(&self, id: NodeId) -> Vec<NodeId> {
+        let mut path = vec![];
+        let mut id = id;
+        while id != NodeId::Root {
+            path.push(id);
+            id = self.get(id).unwrap().parent;
+        }
+        path.push(NodeId::Root);
+        path
     }
 
     pub fn next_id(&self) -> NodeId {
         NodeId::Node(self.nodes.len() as u16)
     }
 
+    fn node_path_string(&self, node: NodeId) -> String {
+        self.walk_up(node)
+            .into_iter()
+            .map(String::from)
+            .rev()
+            .collect::<Vec<_>>()
+            .join(" > ")
+    }
+
     pub fn insert_child(&mut self, parent: NodeId) -> NodeId {
         let id = self.next_id();
-        let node = Node::new(id, parent, self.height(parent) + 1);
+        let node = Node::new(id, parent, self.height(parent) + 1, self.system_area.max_line_length);
         self.nodes.push(node);
+        let path_str = self.node_path_string(id);
         match parent {
             NodeId::Root => self.children.push(id),
             NodeId::Node(parent) => self.nodes[parent as usize].children.push(id),
         }
+        let node = self.get_mut(id).unwrap();
+        node.set_titles(path_str);
         id
     }
 
@@ -197,7 +226,12 @@ impl<'a> Root<'a> {
 
     pub fn previous_sibling(&self, id: NodeId) -> Option<&Node<'a>> {
         let siblings = self.siblings(id);
-        match siblings.iter().rev().skip_while(|&&sibling| sibling != id).nth(1) {
+        match siblings
+            .iter()
+            .rev()
+            .skip_while(|&&sibling| sibling != id)
+            .nth(1)
+        {
             Some(&id) => self.get(id),
             None => siblings.last().and_then(|&id| self.get(id)),
         }
@@ -254,7 +288,7 @@ impl<'a> Root<'a> {
 
 impl<'a> Default for Root<'a> {
     fn default() -> Self {
-        Self::new()
+        Self::new(70)
     }
 }
 
@@ -281,16 +315,23 @@ impl std::fmt::Debug for Node<'_> {
 }
 
 impl<'a> Node<'a> {
-    pub fn new(id: NodeId, parent: NodeId, height: u16) -> Self {
+    pub fn new(id: NodeId, parent: NodeId, height: u16, max_line_length: usize) -> Self {
         Node {
             id,
-            user_area: SessionTextArea::new(SessionAreaId::User, &[], 70),
-            assistant_area: SessionTextArea::new(SessionAreaId::Assistant, &[], 70),
+            user_area: SessionTextArea::new(SessionAreaId::User, &[], max_line_length),
+            assistant_area: SessionTextArea::new(SessionAreaId::Assistant, &[], max_line_length),
             children: vec![],
             parent,
             height,
             active: None,
         }
+    }
+
+    pub fn set_titles(&mut self, path_str: String) {
+        tracing::trace!("setting titles for node {:?}", self.id);
+        self.user_area.set_title(format!("{} : user", path_str));
+        self.assistant_area
+            .set_title(format!("{} : assistant", path_str));
     }
 
     pub fn area(&self, id: SessionAreaId) -> &SessionTextArea<'a> {
@@ -338,20 +379,18 @@ impl<'a> Node<'a> {
 
 #[cfg(test)]
 mod tests {
-    use rgpt_types::message::Role;
-
     use super::*;
 
     #[test]
     fn test_new_page_tree() {
-        let tree = Root::new();
+        let tree = Root::default();
         assert_eq!(tree.nodes.len(), 1);
         assert_eq!(tree.active, NodeId::Root);
     }
 
     #[test]
     fn test_insert_child() {
-        let mut tree = Root::new();
+        let mut tree = Root::default();
         let child_id = tree.insert_child(NodeId::Root);
         assert_eq!(child_id, NodeId::Node(0));
         assert_eq!(tree.nodes.len(), 1);
@@ -360,7 +399,7 @@ mod tests {
 
     #[test]
     fn test_activate() {
-        let mut tree = Root::new();
+        let mut tree = Root::default();
         let child_id = tree.insert_child(NodeId::Root);
         tree.activate(child_id, SessionAreaId::User);
         assert_eq!(tree.active, child_id);
@@ -370,60 +409,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_insert_text_areas() {
-        let mut tree = Root::new();
-        let text_areas = vec![
-            SessionTextArea::new(SessionAreaId::User, &[], 70),
-            SessionTextArea::new(SessionAreaId::Assistant, &[], 70),
-            SessionTextArea::new(SessionAreaId::User, &[], 70),
-        ];
-        let result = tree.insert_text_areas(None, text_areas);
-        println!("{:?}", result);
-        assert!(result.is_ok());
-        assert_eq!(tree.nodes.len(), 3);
-    }
-
-    #[test]
-    fn test_collect_messages() {
-        let messages = [
-            Message {
-                role: Role::User,
-                content: "User message\n".to_string(),
-            },
-            Message {
-                role: Role::Assistant,
-                content: "Assistant message\n".to_string(),
-            },
-            Message {
-                role: Role::User,
-                content: "Another User message\n".to_string(),
-            },
-            Message {
-                role: Role::Assistant,
-                content: "Another Assistant message\n".to_string(),
-            },
-            Message {
-                role: Role::User,
-                content: "A last User message\n".to_string(),
-            },
-        ];
-        let text_areas = messages
-            .iter()
-            .map(|m| {
-                let id = SessionAreaId::from(m.role);
-                let lines = m.content.lines().collect::<Vec<_>>();
-                SessionTextArea::new(id, lines.as_slice(), 100)
-            })
-            .collect();
-        let mut tree = Root::new();
-        tree.insert_text_areas(None, text_areas).unwrap();
-        let collected = tree.collect_messages(NodeId::Node(1), None);
-        println!("original {:?}", messages);
-        println!("collected {:?}", collected);
-        for (left, right) in messages.iter().zip(collected.iter()) {
-            assert_eq!(left.role, right.role);
-            assert_eq!(left.content, right.content);
-        }
-    }
 }
