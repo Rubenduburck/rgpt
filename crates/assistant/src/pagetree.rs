@@ -89,7 +89,7 @@ impl<'a> Root<'a> {
                 return Ok(parent.unwrap_or(NodeId::Root));
             }
             let parent = parent.unwrap_or(NodeId::Root);
-            let child = tree.insert_child(parent);
+            let child = tree.insert_child_with_parent(parent);
             let child_node = tree.get_mut(child).unwrap();
             let message = stack.pop().unwrap();
 
@@ -149,7 +149,7 @@ impl<'a> Root<'a> {
             .join(" > ")
     }
 
-    pub fn insert_child(&mut self, parent: NodeId) -> NodeId {
+    pub fn insert_child_with_parent(&mut self, parent: NodeId) -> NodeId {
         let id = self.next_id();
         let node = Node::new(id, parent, self.height(parent) + 1, self.system_area.max_line_length);
         self.nodes.push(node);
@@ -161,6 +161,23 @@ impl<'a> Root<'a> {
         let node = self.get_mut(id).unwrap();
         node.set_titles(path_str);
         id
+    }
+
+    pub fn fork_node(&mut self, id: NodeId) -> NodeId {
+        tracing::trace!("forking node {:?}", id);
+        let node = self.get(id).unwrap();
+        let next_id = self.next_id();
+        let fork = node.fork(next_id);
+        let parent = node.parent;
+        self.nodes.push(fork);
+        let path_str = self.node_path_string(next_id);
+        match parent {
+            NodeId::Root => self.children.push(next_id),
+            NodeId::Node(parent) => self.nodes[parent as usize].children.push(next_id),
+        }
+        let fork = self.get_mut(next_id).unwrap();
+        fork.set_titles(path_str);
+        next_id
     }
 
     pub fn get_system_area(&self) -> &SessionTextArea<'a> {
@@ -206,6 +223,10 @@ impl<'a> Root<'a> {
             Some(parent) => parent.children.as_slice(),
             None => self.children.as_slice(),
         }
+    }
+
+    pub fn is_locked(&self, id: NodeId) -> bool {
+        self.get(id).map(|node| node.is_locked()).unwrap_or(false)
     }
 
     pub fn siblings_mut(&mut self, id: NodeId) -> &mut [NodeId] {
@@ -300,6 +321,7 @@ pub struct Node<'a> {
     pub parent: NodeId,
     pub height: u16,
     pub active: Option<SessionAreaId>,
+    pub locked: bool,
 }
 
 impl std::fmt::Debug for Node<'_> {
@@ -324,6 +346,24 @@ impl<'a> Node<'a> {
             parent,
             height,
             active: None,
+            locked: false,
+        }
+    }
+
+    pub fn fork(&self, id: NodeId) -> Self {
+        let mut user_area = self.user_area.clone();
+        let mut assistant_area = self.assistant_area.clone();
+        user_area.unlock();
+        assistant_area.unlock();
+        Node {
+            id,
+            user_area,
+            assistant_area,
+            children: vec![],
+            parent: self.parent,
+            height: self.height,
+            active: None,
+            locked: false,
         }
     }
 
@@ -340,6 +380,16 @@ impl<'a> Node<'a> {
             SessionAreaId::Assistant => &self.assistant_area,
             _ => panic!("invalid area id"),
         }
+    }
+
+    pub fn lock(&mut self) {
+        self.locked = true;
+        self.user_area.lock();
+        self.assistant_area.lock();
+    }
+
+    pub fn is_locked(&self) -> bool {
+        self.locked
     }
 
     pub fn area_mut(&mut self, id: SessionAreaId) -> &mut SessionTextArea<'a> {
@@ -391,7 +441,7 @@ mod tests {
     #[test]
     fn test_insert_child() {
         let mut tree = Root::default();
-        let child_id = tree.insert_child(NodeId::Root);
+        let child_id = tree.insert_child_with_parent(NodeId::Root);
         assert_eq!(child_id, NodeId::Node(0));
         assert_eq!(tree.nodes.len(), 1);
         assert_eq!(tree.nodes[0].parent, NodeId::Root);
@@ -400,7 +450,7 @@ mod tests {
     #[test]
     fn test_activate() {
         let mut tree = Root::default();
-        let child_id = tree.insert_child(NodeId::Root);
+        let child_id = tree.insert_child_with_parent(NodeId::Root);
         tree.activate(child_id, SessionAreaId::User);
         assert_eq!(tree.active, child_id);
         assert_eq!(

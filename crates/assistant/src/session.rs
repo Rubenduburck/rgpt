@@ -151,7 +151,7 @@ impl<'a> SessionLayout<'a> {
         self.active = id;
     }
 
-    fn switch(&mut self) {
+    fn switch_pane(&mut self) {
         self.activate(match self.active {
             SessionAreaId::User => SessionAreaId::Assistant,
             SessionAreaId::Assistant => SessionAreaId::System,
@@ -160,7 +160,15 @@ impl<'a> SessionLayout<'a> {
     }
 
     fn input(&mut self, input: Input) {
-        self.current_node_area_mut(self.active).input(input);
+        if !self.current_node_area_mut(self.active).input(input.clone()) {
+            self.fork_current_node();
+            self.current_node_area_mut(self.active).input(input);
+        }
+    }
+
+    fn fork_current_node(&mut self) {
+        let fork_id = self.page_tree.fork_node(self.current_node);
+        self.switch_node(fork_id);
     }
 
     fn user_text_area_to_draw(&self) -> &TextArea {
@@ -218,7 +226,7 @@ impl<'a> SessionLayout<'a> {
     }
 
     fn new_branch(&mut self, node_id: NodeId) {
-        let id = self.page_tree.insert_child(
+        let id = self.page_tree.insert_child_with_parent(
             self.page_tree
                 .parent(node_id)
                 .map_or(NodeId::Root, |n| n.id),
@@ -242,7 +250,8 @@ impl<'a> SessionLayout<'a> {
         Ok(())
     }
 
-    fn set_assistant_stream_node_to_current(&mut self) {
+    fn lock_current_node(&mut self) {
+        self.page_tree.get_mut(self.current_node).unwrap().lock();
         self.assistant_stream_node = Some(self.current_node);
     }
 
@@ -255,7 +264,7 @@ impl<'a> SessionLayout<'a> {
     }
 
     fn new_child(&mut self, node: NodeId) {
-        let id = self.page_tree.insert_child(node);
+        let id = self.page_tree.insert_child_with_parent(node);
         self.switch_node(id);
     }
 
@@ -304,12 +313,12 @@ impl<'a> SessionLayout<'a> {
             }
             TextEvent::ContentBlockStart { content_block, .. } => {
                 for input in string_to_inputs(content_block.text().unwrap_or_default().as_str()) {
-                    area.input(input);
+                    area.force_input(input);
                 }
             }
             TextEvent::ContentBlockDelta { delta, .. } => {
                 for input in string_to_inputs(delta.text().unwrap_or_default().as_str()) {
-                    area.input(input);
+                    area.force_input(input);
                 }
             }
             TextEvent::ContentBlockStop { .. } => {}
@@ -358,7 +367,7 @@ impl SessionInner {
                         match event.into() {
                             Input { key: Key::Esc, .. } => break,
                             Input {key: Key::Tab, ..} => {
-                                self.layout.switch();
+                                self.layout.switch_pane();
                             },
                             Input {
                                 key: Key::Char('c'),
@@ -408,7 +417,7 @@ impl SessionInner {
                                 let messages = self.layout.messages();
                                 tracing::debug!("sending messages to assistant: {:?}", messages);
                                 self.assistant.handle_input(messages, tx.clone());
-                                self.layout.set_assistant_stream_node_to_current();
+                                self.layout.lock_current_node();
                                 self.layout.new_child_at_current();
                             }
                             input => {

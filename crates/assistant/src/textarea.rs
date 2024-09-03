@@ -78,10 +78,12 @@ impl From<SessionAreaId> for String {
     }
 }
 
+#[derive(Clone)]
 pub struct SessionTextArea<'a> {
     pub id: SessionAreaId,
     pub title: String,
     pub text_area: TextArea<'a>,
+    pub locked: bool,
 
     // FIXME: patch until tui-textarea implements wrapping.
     pub max_line_length: usize,
@@ -103,6 +105,7 @@ impl<'a> SessionTextArea<'a> {
             title: "temp".to_string(),
             text_area: Self::text_area_format(),
             max_line_length,
+            locked: false,
         };
         if !lines.is_empty() {
             for input in string_to_inputs(lines.join("\n").as_str()) {
@@ -115,6 +118,18 @@ impl<'a> SessionTextArea<'a> {
         }
         s.inactivate();
         s
+    }
+
+    pub fn unlock(&mut self) {
+        self.locked = false;
+    }
+
+    pub fn lock(&mut self) {
+        self.locked = true;
+    }
+
+    pub fn is_locked(&self) -> bool {
+        self.locked
     }
 
     pub fn set_title(&mut self, title: String) {
@@ -170,9 +185,12 @@ impl<'a> SessionTextArea<'a> {
         lines.is_empty() || lines.len() == 1 && (lines[0].is_empty() || lines[0] == "\n")
     }
 
-    pub fn input(&mut self, input: Input) {
+    pub fn input(&mut self, input: Input) -> bool {
         match input.key {
             Key::Char(_) => {
+                if self.is_locked() {
+                    return false;
+                }
                 let current_line_length = self.lines().last().map_or(0, |l| l.len());
                 if current_line_length + 1 >= self.max_line_length {
                     self.text_area.input(Input {
@@ -182,8 +200,21 @@ impl<'a> SessionTextArea<'a> {
                 }
                 self.text_area.input(input)
             }
+            Key::Backspace | Key::Delete | Key::Enter | Key::Tab => {
+                if self.is_locked() {
+                    return false;
+                }
+                self.text_area.input(input)
+            }
             _ => self.text_area.input(input),
         };
+        true
+    }
+
+    pub fn force_input(&mut self, input: Input) {
+        self.locked = false;
+        self.text_area.input(input);
+        self.locked = true;
     }
 
     pub fn text_area(&self) -> &TextArea<'a> {
