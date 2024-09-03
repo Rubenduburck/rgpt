@@ -2,6 +2,7 @@ pub mod config;
 pub mod error;
 pub mod query;
 pub mod session;
+pub mod pagetree;
 
 use std::sync::Arc;
 

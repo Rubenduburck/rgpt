@@ -6,7 +6,6 @@ edition = "2021"
 [dependencies]
 rgpt-types = { workspace = true }
 rgpt-provider = { workspace = true }
-rgpt-state = { workspace = true }
 rgpt-utils = { workspace = true }
 
 serde = { workspace = true, features = ["derive"] }

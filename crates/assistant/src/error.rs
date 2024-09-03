@@ -29,4 +29,7 @@ pub enum Error {
 
     #[error("Dialoguer error")]
     Dialoguer(#[from] dialoguer::Error),
+
+    #[error("Generic {0}")]
+    Generic(String),
 }

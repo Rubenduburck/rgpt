@@ -15,7 +15,6 @@ rgpt-caller = { path = "crates/caller" }
 rgpt-utils = { path = "crates/utils" }
 rgpt-provider = { path = "crates/provider" }
 rgpt-assistant = { path = "crates/assistant" }
-rgpt-state = { path = "crates/state" }
 
 # Logging
 tracing = "0.1.40"
