@@ -37,39 +37,37 @@ impl<'a> Root<'a> {
         }
     }
 
-    // FIXME: this is messy
-    pub fn activate(&mut self, id: NodeId, area: SessionAreaId) {
+    /// Activate a node and its area.
+    /// For the assistant area, we want to fall back to the parent node's assistant area if the
+    /// current node's assistant area is empty.
+    pub fn activate(&mut self, id: NodeId, area_id: SessionAreaId) {
         if let Some(node) = self.get_mut(self.active) {
             node.inactivate();
             self.active = NodeId::Root;
         }
         self.system_area.inactivate();
         self.system_area.set_title("root > system".to_string());
-        match area {
+        match area_id {
             SessionAreaId::System => {
                 self.system_area.activate();
             }
-            SessionAreaId::Assistant => {
-                let success = {
-                    if let Some(node) = self.get_mut(id) {
-                        if node.assistant_area.is_empty() {
-                            false
-                        } else {
-                            node.activate(SessionAreaId::Assistant);
-                            self.active = id;
-                            true
-                        }
+            SessionAreaId::Assistant => match (id, self.parent_id(id)) {
+                (id @ NodeId::Node(_), parent @ NodeId::Node(_)) => {
+                    if self.get(id).unwrap().assistant_area.is_empty() {
+                        self.get_mut(parent)
+                            .unwrap()
+                            .activate(SessionAreaId::Assistant);
                     } else {
-                        false
-                    }
-                };
-                if !success {
-                    if let Some(parent) = self.parent_mut(id) {
-                        parent.activate(SessionAreaId::Assistant);
-                        self.active = parent.id;
+                        self.activate(id, SessionAreaId::Assistant);
                     }
                 }
-            }
+                (id @ NodeId::Node(_), NodeId::Root) => {
+                    self.get_mut(id).unwrap().activate(SessionAreaId::Assistant);
+                }
+                _ => {
+                    tracing::error!("cannot activate assistant area for node {:?}", id);
+                }
+            },
             SessionAreaId::User => {
                 if let Some(node) = self.get_mut(id) {
                     node.activate(SessionAreaId::User);
@@ -79,7 +77,11 @@ impl<'a> Root<'a> {
         }
     }
 
-    pub fn insert_messages(&mut self, parent: Option<NodeId>, messages: Vec<Message>) -> Result<NodeId, Error> {
+    pub fn insert_messages(
+        &mut self,
+        parent: Option<NodeId>,
+        messages: Vec<Message>,
+    ) -> Result<NodeId, Error> {
         fn inner(
             tree: &mut Root,
             parent: Option<NodeId>,
@@ -151,7 +153,12 @@ impl<'a> Root<'a> {
 
     pub fn insert_child_with_parent(&mut self, parent: NodeId) -> NodeId {
         let id = self.next_id();
-        let node = Node::new(id, parent, self.height(parent) + 1, self.system_area.max_line_length);
+        let node = Node::new(
+            id,
+            parent,
+            self.height(parent) + 1,
+            self.system_area.max_line_length,
+        );
         self.nodes.push(node);
         let path_str = self.node_path_string(id);
         match parent {
@@ -207,6 +214,10 @@ impl<'a> Root<'a> {
             NodeId::Root => None,
             NodeId::Node(id) => self.nodes.get_mut(id as usize),
         }
+    }
+
+    pub fn parent_id(&self, id: NodeId) -> NodeId {
+        self.get(id).map(|node| node.parent).unwrap_or(NodeId::Root)
     }
 
     pub fn parent(&self, id: NodeId) -> Option<&Node<'a>> {
@@ -458,5 +469,4 @@ mod tests {
             Some(SessionAreaId::User)
         );
     }
-
 }

@@ -102,6 +102,7 @@ impl<'a> SessionLayout<'a> {
             assistant_stream_node: None,
         };
         layout.activate(active);
+        layout.switch_node(current_node);
         layout
     }
 
@@ -125,13 +126,15 @@ impl<'a> SessionLayout<'a> {
         }
     }
 
-    fn parent_node_area(&self, id: SessionAreaId) -> &SessionTextArea<'a> {
-        match id {
+    /// Get the parent node of the current node and return the area with the given id.
+    /// Default to the node itself if the parent is not found (is root).
+    fn parent_node_area(&self, area_id: SessionAreaId) -> &SessionTextArea<'a> {
+        match area_id {
             SessionAreaId::System => self.page_tree.get_system_area(),
-            _ => {
-                let parent_id = self.page_tree.get(self.current_node).unwrap().parent;
-                self.page_tree.get(parent_id).unwrap().area(id)
-            }
+            _ => match self.page_tree.get(self.current_node).map(|n| n.parent) {
+                Some(node @ NodeId::Node(_)) => self.page_tree.get(node).unwrap().area(area_id),
+                _ => self.current_node_area(area_id),
+            },
         }
     }
 
@@ -240,12 +243,7 @@ impl<'a> SessionLayout<'a> {
     }
 
     fn update(&mut self, messages: &[Message], node: Option<NodeId>) -> Result<(), Error> {
-        if messages.is_empty() {
-            return Ok(());
-        }
-
         let id = self.page_tree.insert_messages(node, messages.to_vec())?;
-
         self.switch_node(id);
         Ok(())
     }
@@ -351,8 +349,10 @@ impl SessionInner {
         let mut eventstream = crossterm::event::EventStream::new();
         let (tx, mut rx) = tokio::sync::mpsc::channel(100);
 
-        if let Err(e) = self.layout.update(messages, None) {
-            tracing::error!("error: {}", e);
+        if !messages.is_empty() {
+            if let Err(e) = self.layout.update(messages, None) {
+                tracing::error!("error: {}", e);
+            }
         }
 
         term.draw(|f| {

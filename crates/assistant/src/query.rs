@@ -85,9 +85,11 @@ impl Query {
         } else {
             messages.to_vec()
         };
+        let mut query_messages = self.assistant.init_messages();
+        query_messages.extend(messages);
 
         let (resp_tx, mut resp_rx) = tokio::sync::mpsc::channel(10);
-        self.assistant.handle_input(messages, resp_tx);
+        self.assistant.handle_input(query_messages, resp_tx);
 
         let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(10);
         tokio::spawn(async move {
