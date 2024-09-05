@@ -76,6 +76,8 @@ impl Client {
             return Err(Error::ApiError(wrapped_error.error));
         }
 
+        tracing::trace!("Response body: {:?}", String::from_utf8_lossy(bytes.as_ref()));
+
         let response: O = serde_json::from_slice(bytes.as_ref())
             .map_err(|e| map_deserialization_error(e, bytes.as_ref()))?;
         Ok(response)
@@ -106,6 +108,10 @@ impl Client {
 
                     // Deserialize response body from either error object or actual response object
                     if !status.is_success() {
+                        tracing::error!(
+                            "Error response: {}",
+                            String::from_utf8_lossy(bytes.as_ref())
+                        );
                         let wrapped_error: WrappedError = serde_json::from_slice(bytes.as_ref())
                             .map_err(|e| map_deserialization_error(e, bytes.as_ref()))
                             .map_err(backoff::Error::Permanent)?;
@@ -123,6 +129,10 @@ impl Client {
                         }
                     }
 
+                    tracing::trace!(
+                        "Response body: {:?}",
+                        String::from_utf8_lossy(bytes.as_ref())
+                    );
                     let response: O = serde_json::from_slice(bytes.as_ref())
                         .map_err(|e| map_deserialization_error(e, bytes.as_ref()))
                         .map_err(backoff::Error::Permanent)?;

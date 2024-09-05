@@ -11,7 +11,7 @@ use config::{Config, Mode};
 use query::Query;
 use rgpt_provider::{api_key::ApiKey, Provider};
 use rgpt_types::{
-    completion::{Request, RequestBuilder, TextEvent},
+    completion::{Request, TextEvent},
     message::Message,
 };
 
@@ -47,12 +47,14 @@ impl Assistant {
     }
 
     fn build_request(&self, messages: Vec<Message>) -> Request {
-        RequestBuilder::new()
+        let mut builder = Request::builder()
             .messages(messages)
-            .model(self.config.model.clone())
             .temperature(self.config.temperature)
-            .stream(self.config.stream)
-            .build()
+            .stream(self.config.stream);
+        if let Some(model) = &self.config.model {
+            builder = builder.model(model.clone());
+        }
+        builder.build()
     }
 
     fn complete(&self, messages: Vec<Message>, tx: tokio::sync::mpsc::Sender<TextEvent>) {

@@ -46,7 +46,6 @@ impl Provider {
                 "When stream is true, use messages_stream() instead".into(),
             ));
         }
-        tracing::debug!("request: {:?}", request);
         Ok(self
             .caller
             .post(&format!("{}/v1/messages", API_BASE), request)
@@ -140,30 +139,33 @@ impl Provider {
 
 #[cfg(test)]
 mod tests {
+    use tokio_stream::StreamExt as _;
+
     use crate::anthropic::types::Message;
 
     const AI_PROMPT: &str = "Assistant: ";
     const HUMAN_PROMPT: &str = "Human: ";
     use super::*;
 
+    //#[tokio::test]
+    //async fn test_complete() -> Result<(), Box<dyn std::error::Error>> {
+    //    let prompt = format!("{HUMAN_PROMPT}A human walks into a bar{AI_PROMPT}");
+    //
+    //    // get the api key from the environment
+    //    let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap();
+    //    let client = Provider::new(api_key);
+    //    let request = CompleteRequest {
+    //        prompt,
+    //        ..Default::default()
+    //    };
+    //
+    //    let response = client.complete(request).await.unwrap();
+    //    println!("response: {:?}", response);
+    //    Err("test not implemented".into())
+    //}
+
     #[tokio::test]
-    async fn test_complete() -> Result<(), Box<dyn std::error::Error>> {
-        let prompt = format!("{HUMAN_PROMPT}A human walks into a bar{AI_PROMPT}");
-
-        // get the api key from the environment
-        let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap();
-        let client = Provider::new(api_key);
-        let request = CompleteRequest {
-            prompt,
-            ..Default::default()
-        };
-
-        let response = client.complete(request).await.unwrap();
-        println!("response: {:?}", response);
-        Err("test not implemented".into())
-    }
-
-    #[tokio::test]
+    #[tracing_test::traced_test]
     async fn test_messages() -> Result<(), Box<dyn std::error::Error>> {
         let messages = vec![
             Message {
@@ -188,8 +190,46 @@ mod tests {
             ..Default::default()
         };
 
+
+//{\"id\":\"msg_01UZHWJDoDcy78R6YtbPqpHN\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-3-5-sonnet-20240620\",\"content\":[{\"type\":\"text\",\"text\":\"The bartender nods and asks, \\\"Any particular type of beer you're in the mood for? We've got lagers, ales, stouts, and some local craft beers on tap.\\\"\"}],\"stop_reason\":\"end_turn\",\"stop_sequence\":null,\"usage\"
+//:{\"input_tokens\":45,\"output_tokens\":44}}
+
         let response = client.messages(request).await.unwrap();
         println!("response: {:?}", response);
-        Err("test not implemented".into())
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[tracing_test::traced_test]
+    async fn test_messages_stream() -> Result<(), Box<dyn std::error::Error>> {
+        let messages = vec![
+            Message {
+                role: "user".into(),
+                content: "A human walks into a bar".into(),
+            },
+            Message {
+                role: "assistant".into(),
+                content: "The bartender says, 'What can I get you?'".into(),
+            },
+            Message {
+                role: "user".into(),
+                content: "The human says, 'I'll have a beer'".into(),
+            },
+        ];
+
+        // get the api key from the environment
+        let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap();
+        let client = Provider::new(api_key);
+        let request = MessagesRequest {
+            messages,
+            stream: true,
+            ..Default::default()
+        };
+
+        let mut stream = client.messages_stream(request).await.unwrap();
+        while let Some(event) = stream.next().await {
+            println!("event: {:?}", event);
+        }
+        Ok(())
     }
 }

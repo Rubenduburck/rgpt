@@ -76,8 +76,8 @@ impl Builder {
         self
     }
 
-    pub fn model(mut self, model: Option<String>) -> Self {
-        self.model = model;
+    pub fn model(mut self, model: String) -> Self {
+        self.model = Some(model);
         self
     }
 

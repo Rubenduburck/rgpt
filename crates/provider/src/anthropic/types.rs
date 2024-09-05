@@ -165,15 +165,18 @@ impl Default for MessagesRequest {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[serde(tag = "type")]
 pub enum Content {
-    Text(String),
+    Text{
+        text: String,
+    },
     Other,
 }
 
 impl From<Content> for rgpt_types::completion::Content {
     fn from(content: Content) -> Self {
         match content {
-            Content::Text(text) => Self::Text(text),
+            Content::Text{text} => Self::Text{text},
             Content::Other => Self::Other,
         }
     }
@@ -194,6 +197,9 @@ impl From<Usage> for rgpt_types::completion::Usage {
     }
 }
 
+//{\"id\":\"msg_01UZHWJDoDcy78R6YtbPqpHN\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-3-5-sonnet-20240620\",\"content\":[{\"type\":\"text\",\"text\":\"The bartender nods and asks, \\\"Any particular type of beer you're in the mood for? We've got lagers, ales, stouts, and some local craft beers on tap.\\\"\"}],\"stop_reason\":\"end_turn\",\"stop_sequence\":null,\"usage\"
+//:{\"input_tokens\":45,\"output_tokens\":44}}
+
 #[derive(Debug, Deserialize, Clone, Serialize)]
 pub struct MessagesResponse {
     pub stop_reason: Option<StopReason>,
@@ -203,6 +209,7 @@ pub struct MessagesResponse {
     pub id: String,
     #[serde(rename = "type")]
     pub type_: String,
+    pub role: String,
     pub usage: Usage,
 }
 
@@ -222,6 +229,7 @@ impl From<MessagesResponse> for rgpt_types::completion::Response {
             id: response.id,
             type_: response.type_,
             usage: response.usage.into(),
+            role: response.role,
         }
     }
 }

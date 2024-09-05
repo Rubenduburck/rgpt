@@ -13,6 +13,12 @@ pub struct Request {
     pub temperature: Option<f32>,
 }
 
+impl Request {
+    pub fn builder() -> RequestBuilder {
+        RequestBuilder::new()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RequestBuilder {
     messages: Vec<Message>,
@@ -43,8 +49,8 @@ impl RequestBuilder {
         Default::default()
     }
 
-    pub fn model(mut self, model: Option<String>) -> Self {
-        self.model = model;
+    pub fn model(mut self, model: String) -> Self {
+        self.model = Some(model);
         self
     }
 
@@ -68,8 +74,8 @@ impl RequestBuilder {
         self
     }
 
-    pub fn system(mut self, system: Option<String>) -> Self {
-        self.system = system;
+    pub fn system(mut self, system: String) -> Self {
+        self.system = Some(system);
         self
     }
 
@@ -99,22 +105,25 @@ pub struct Usage {
 
 #[derive(Debug, Deserialize, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[serde(tag = "type")]
 pub enum Content {
-    Text(String),
+    Text{
+        text: String,
+    },
     Other,
 }
 
 impl Content {
     pub fn text(&self) -> Option<String> {
         match self {
-            Content::Text(text) => Some(text.clone()),
+            Content::Text{text} => Some(text.clone()),
             _ => None,
         }
     }
 
     pub fn bytes(&self) -> Vec<u8> {
         match self {
-            Content::Text(text) => text.as_bytes().to_vec(),
+            Content::Text{text} => text.as_bytes().to_vec(),
             _ => vec![],
         }
     }
@@ -123,12 +132,14 @@ impl Content {
 impl From<Content> for Message {
     fn from(content: Content) -> Self {
         match content {
-            Content::Text(text) => Message::from(text),
+            Content::Text{text} => Message::from(text),
             Content::Other => Message::from("".to_string()),
         }
     }
 }
 
+//{\"id\":\"msg_01UZHWJDoDcy78R6YtbPqpHN\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-3-5-sonnet-20240620\",\"content\":[{\"type\":\"text\",\"text\":\"The bartender nods and asks, \\\"Any particular type of beer you're in the mood for? We've got lagers, ales, stouts, and some local craft beers on tap.\\\"\"}],\"stop_reason\":\"end_turn\",\"stop_sequence\":null,\"usage\"
+//:{\"input_tokens\":45,\"output_tokens\":44}}
 #[derive(Debug, Deserialize, Clone, Serialize)]
 pub struct Response {
     pub stop_reason: Option<StopReason>,
@@ -138,6 +149,7 @@ pub struct Response {
     pub id: String,
     #[serde(rename = "type")]
     pub type_: String,
+    pub role: String,
     pub usage: Usage,
 }
 
