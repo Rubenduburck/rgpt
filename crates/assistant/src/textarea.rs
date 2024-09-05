@@ -143,7 +143,7 @@ impl<'a> SessionTextArea<'a> {
         text_area.set_block(
             Block::default()
                 .borders(Borders::ALL)
-                .style(Style::default().fg(Color::DarkGray))
+                .style(Style::default().fg(Color::DarkGray)),
         );
         text_area
     }
@@ -213,7 +213,7 @@ impl<'a> SessionTextArea<'a> {
 
     pub fn force_input(&mut self, input: Input) {
         self.locked = false;
-        self.text_area.input(input);
+        self.input(input);
         self.locked = true;
     }
 
@@ -222,7 +222,11 @@ impl<'a> SessionTextArea<'a> {
     }
 
     pub fn activate(&mut self) {
-        tracing::trace!("Activating SessionTextArea: {:?} with title {}", self.id, self.title());
+        tracing::trace!(
+            "Activating SessionTextArea: {:?} with title {}",
+            self.id,
+            self.title()
+        );
         self.text_area
             .set_cursor_style(Style::default().add_modifier(Modifier::REVERSED));
         self.text_area.set_block(
