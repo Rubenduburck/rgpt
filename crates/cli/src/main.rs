@@ -35,6 +35,5 @@ impl Args {
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    rgpt_utils::logging::init_logger(None);
     Args::parse().execute().await
 }
